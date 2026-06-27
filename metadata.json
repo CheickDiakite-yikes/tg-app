@@ -1,0 +1,6 @@
+{
+  "name": "StoryBridge",
+  "description": "A platform for teachers who work with autistic children (K-12) to easily create visual lessons and slideshows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
