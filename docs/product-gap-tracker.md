@@ -1,6 +1,6 @@
 # StoryBridge Product Gap Tracker
 
-Last updated: 2026-06-27
+Last updated: 2026-06-28
 
 ## Scope
 
@@ -36,3 +36,11 @@ Date: 2026-06-27
 - Added non-destructive delete confirmation and toast-style feedback for library actions.
 - Tightened activity job labels so generation status keeps the original slide number.
 - Rechecked Browser evidence at 320x568 and 375x667. Screenshots are in `/tmp/storybridge-systematic`, with the final small-phone no-overlap proof at `07-main-iphone-se-no-fab-overlap-320x568.png`.
+
+## Continued Gap Closing Pass
+
+Date: 2026-06-28
+
+- Closed the smallest-phone header gap where the profile/library entry could be pushed offscreen by the wordmark and header controls.
+- On max-360px layouts, the header now preserves the leaf mark, keeps activity, comfort, and profile buttons visible, and collapses the wordmark only when the viewport is too tight.
+- Browser evidence is in `/tmp/storybridge-gap-closing-2026-06-28`, with the fixed phone proof at `03-after-header-iphone-se.png`.

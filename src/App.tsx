@@ -787,15 +787,15 @@ export default function App() {
     <div className="min-h-screen bg-bg-card flex flex-col font-sans selection:bg-brand-primary selection:text-white">
       
       {/* Header */}
-      <header className="flex items-center justify-between px-3 py-3 sm:px-12 sm:py-5">
-        <div className="flex items-center gap-2 cursor-pointer sm:gap-3">
-          <div className="bg-brand-primary p-1.5 rounded-xl text-white sm:p-2">
-            <Leaf size={22} />
+      <header className="flex items-center justify-between px-3 py-3 max-[360px]:px-2 sm:px-12 sm:py-5">
+        <div className="flex min-w-0 items-center gap-2 cursor-pointer sm:gap-3">
+          <div className="shrink-0 rounded-xl bg-brand-primary p-1.5 text-white max-[360px]:rounded-lg max-[360px]:p-1.5 sm:p-2">
+            <Leaf size={22} className="max-[360px]:h-5 max-[360px]:w-5" />
           </div>
-          <span className="font-extrabold text-lg tracking-tight text-brand-dark sm:text-2xl">StoryBridge</span>
+          <span className="truncate text-lg font-extrabold tracking-tight text-brand-dark max-[360px]:hidden sm:text-2xl">StoryBridge</span>
         </div>
         
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex shrink-0 items-center gap-2 max-[360px]:gap-1.5 sm:gap-4">
           <button
             type="button"
             onClick={() => openCreateAgent()}
@@ -812,9 +812,9 @@ export default function App() {
               setIsActivityOpen(true);
             }}
             aria-label="Open generation activity"
-            className="p-2 bg-white rounded-full text-brand-text hover:bg-brand-light transition-colors relative sm:p-3"
+            className="relative rounded-full bg-white p-2 text-brand-text transition-colors hover:bg-brand-light max-[360px]:p-1.5 sm:p-3"
           >
-            <Bell size={20} />
+            <Bell size={20} className="max-[360px]:h-[18px] max-[360px]:w-[18px]" />
             {activeMediaJobs.length > 0 && (
               <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
             )}
@@ -826,9 +826,9 @@ export default function App() {
               setIsComfortOpen(true);
             }}
             aria-label="Open comfort controls"
-            className="p-2 bg-white rounded-full text-brand-text hover:bg-brand-light transition-colors sm:p-3"
+            className="rounded-full bg-white p-2 text-brand-text transition-colors hover:bg-brand-light max-[360px]:p-1.5 sm:p-3"
           >
-            <SlidersHorizontal size={20} />
+            <SlidersHorizontal size={20} className="max-[360px]:h-[18px] max-[360px]:w-[18px]" />
           </button>
           <button
             type="button"
@@ -837,7 +837,7 @@ export default function App() {
               setIsProfileOpen(true);
             }}
             aria-label="Open teacher profile and saved slideshows"
-            className="h-10 w-10 rounded-full overflow-hidden border-2 border-white shadow-sm cursor-pointer hover:scale-105 transition-transform sm:h-12 sm:w-12"
+            className="h-10 w-10 cursor-pointer overflow-hidden rounded-full border-2 border-white shadow-sm transition-transform hover:scale-105 max-[360px]:h-9 max-[360px]:w-9 sm:h-12 sm:w-12"
           >
             <img src={starterVisuals.teacher} alt="Profile" className="w-full h-full object-cover" />
           </button>
