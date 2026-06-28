@@ -66,6 +66,61 @@ StoryBridge is built for teachers working with autistic children, so the design 
 
 All Gemini calls must stay server-side in `server.ts`. The client should never receive or reference `GEMINI_API_KEY`.
 
+### System Diagram
+
+```mermaid
+flowchart TD
+  Teacher["Teacher on web, iPad, or iPhone"] --> ReactApp["React app"]
+  ReactApp --> CreateModal["CreateModal natural chat"]
+  ReactApp --> Carousel["Carousel Slide Show and Show Time"]
+  ReactApp --> Library["Local Teacher Library"]
+
+  CreateModal --> ApiChat["POST /api/chat"]
+  CreateModal --> ApiLesson["POST /api/generate-lesson"]
+  Carousel --> ApiImage["POST /api/generate-image"]
+  Carousel --> ApiVideo["POST /api/generate-video"]
+  Carousel --> ApiVideoStatus["POST /api/video-status"]
+  Carousel --> ApiVideoDownload["GET /api/video-download"]
+
+  ApiChat --> Server["server.ts Express API boundary"]
+  ApiLesson --> Server
+  ApiImage --> Server
+  ApiVideo --> Server
+  ApiVideoStatus --> Server
+  ApiVideoDownload --> Server
+
+  Server --> ChatSessions["In-memory chatSessions map"]
+  Server --> Env[".env GEMINI_API_KEY"]
+
+  Server --> Interactions["Gemini Interactions API"]
+  Interactions --> TextModel["gemini-3.5-flash structured text"]
+  Interactions --> ImageModel["gemini-3-pro-image slide images"]
+
+  Server --> Veo["Veo long-running video operations"]
+  Veo --> VideoModel["veo-3.1-lite-generate-preview MP4"]
+
+  Library --> IndexedDb["IndexedDB storybridge.lessonLibrary.db"]
+  Library --> LocalStorage["localStorage fallback"]
+```
+
+### Request Flow
+
+```text
+Teacher prompt
+  -> React CreateModal
+  -> server.ts /api/chat
+  -> ai.interactions.create
+  -> server stores interaction.id as previousInteractionId
+  -> React shows agent reply and inferred draft
+  -> /api/generate-lesson creates structured lesson JSON
+  -> /api/generate-image creates full-slide images through Interactions
+  -> /api/generate-video starts Veo operation when Show Time video is needed
+  -> /api/video-status polls until done
+  -> /api/video-download streams the MP4
+  -> Carousel plays Slide Show or Show Time
+  -> App saves lesson locally
+```
+
 ### Server Endpoints
 
 | Endpoint | Purpose | Gemini path |
@@ -78,6 +133,47 @@ All Gemini calls must stay server-side in `server.ts`. The client should never r
 | `POST /api/video-status` | Polls a Veo operation. | `ai.operations.getVideosOperation` |
 | `GET /api/video-download?op=...` | Streams the completed MP4 to the app. | Fetches the generated video URI with server API key |
 
+### Interactions API Details
+
+Google describes the Interactions API as the recommended Gemini interface for new projects. StoryBridge uses it for the parts of the product that benefit from a single turn resource, stateful conversation, structured output, and multimodal output.
+
+In this app, every `ai.interactions.create` call is a complete task turn:
+
+- `/api/chat` creates a teacher-agent conversation turn.
+- `/api/generate-lesson` creates structured lesson JSON from the conversation and preferences.
+- `/api/generate-image` creates a complete generated slide image using `response_modalities: ["image"]`.
+
+The returned interaction `id` matters. `server.ts` saves it as `previousInteractionId` inside the `chatSessions` map, keyed by the client `sessionId`. The next chat or lesson call sends that value back as `previous_interaction_id`, which lets Gemini retrieve the prior conversation history without the browser resending the whole transcript.
+
+```mermaid
+sequenceDiagram
+  participant UI as React UI
+  participant API as server.ts
+  participant Sessions as chatSessions Map
+  participant Gemini as Gemini Interactions API
+
+  UI->>API: POST /api/chat { sessionId, message, context }
+  API->>Sessions: get previousInteractionId for sessionId
+  API->>Gemini: ai.interactions.create with previous_interaction_id
+  Gemini-->>API: Interaction { id, output_text, steps }
+  API->>Sessions: save id as previousInteractionId
+  API-->>UI: agent JSON reply and interactionId
+
+  UI->>API: POST /api/generate-lesson { sessionId, topic, preferences }
+  API->>Sessions: reuse previousInteractionId
+  API->>Gemini: ai.interactions.create with response_format schema
+  Gemini-->>API: structured lesson JSON
+  API-->>UI: lesson payload
+```
+
+Important implementation details:
+
+- Re-send `system_instruction` on every Interactions call. Google treats it as interaction-scoped, not permanently attached to the conversation.
+- Re-send `generation_config`, `response_format`, and any future tools on each call that needs them.
+- Keep `response_format` schemas close to the server endpoint that owns them.
+- Keep Interactions parsing defensive because model responses can appear as `output_text`, `outputs`, or `steps` depending on modality and SDK behavior.
+- Use `store=true` default behavior when we need `previous_interaction_id`. If a future privacy mode sets `store=false`, that mode cannot rely on server-side conversation continuation.
+
 ### Why Video Uses A Different Path
 
 Text, chat, structured lesson output, and images use the Gemini Interactions API.
@@ -89,6 +185,11 @@ Video generation currently uses Veo's long-running operation flow through `ai.mo
 `/api/chat` stores `previousInteractionId` in an in-memory `Map` by `sessionId`. This lets the StoryBridge agent carry context through a creation conversation.
 
 This is prototype-grade state. If we add accounts or cloud persistence, move session state to durable storage.
+
+### Official References
+
+- Gemini Interactions API overview: https://ai.google.dev/gemini-api/docs/interactions-overview
+- Gemini API docs: https://ai.google.dev/gemini-api/docs
 
 ## Environment Setup
 
