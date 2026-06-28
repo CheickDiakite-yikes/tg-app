@@ -143,7 +143,7 @@ export default function Carousel({ slides }: CarouselProps) {
                     slide.mediaType === 'video' ? (
                       <video 
                         src={slide.mediaUrl} 
-                        className="w-full h-full object-cover" 
+                        className="w-full h-full object-contain bg-white"
                         autoPlay 
                         loop 
                         muted 
@@ -153,26 +153,23 @@ export default function Carousel({ slides }: CarouselProps) {
                       <img 
                         src={slide.mediaUrl} 
                         alt={slide.text} 
-                        className="w-full h-full object-cover" 
+                        className="w-full h-full object-contain bg-white"
                         referrerPolicy="no-referrer"
                       />
                     )
                   ) : (
-                    <div className="text-brand-text opacity-40">No media</div>
+                    <div className="max-w-xs rounded-3xl bg-white/70 px-6 py-5 text-center text-brand-text shadow-sm">
+                      <p className="font-extrabold">Visual pending</p>
+                      <p className="mt-1 text-sm opacity-60">Add a Gemini API key to generate this scene.</p>
+                    </div>
                   )}
 
-                  {/* Overlaid Text */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-white/90 via-white/50 to-transparent flex items-center p-8 sm:p-12 w-[60%] sm:w-[50%]">
-                    <h2 className="text-2xl sm:text-4xl md:text-5xl font-bold text-brand-text leading-tight tracking-tight">
-                      {slide.text}
-                    </h2>
-                  </div>
                 </div>
 
                 {/* Footer Toolbar */}
                 <div className="h-16 border-t border-brand-primary/10 flex items-center justify-between px-6 bg-white shrink-0">
                   <button 
-                    onClick={() => speak(slide.text)}
+                    onClick={() => speak(slide.narration || slide.text)}
                     className="flex items-center gap-2 text-brand-primary font-semibold hover:bg-brand-light px-4 py-2 rounded-full transition-colors active:scale-95"
                   >
                     <Volume2 size={20} />

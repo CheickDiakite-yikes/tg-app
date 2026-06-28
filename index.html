@@ -3,11 +3,50 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <meta name="theme-color" content="#597B65" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23597B65'/%3E%3Cpath d='M17 38c14-1 22-9 24-24 8 10 4 25-11 31-5 2-9 2-13-1v-6Z' fill='%23F7F2E8'/%3E%3Cpath d='M31 44c-1-13 4-22 16-27 2 12-4 23-16 27Z' fill='%23DDE9D5'/%3E%3C/svg%3E" />
+    <title>StoryBridge</title>
+    <script>
+      window.__storybridgeBootError = function (message) {
+        window.__storybridgeBootMessage = message;
+        var root = document.getElementById('root');
+        if (!root || root.childNodes.length) return;
+        root.innerHTML =
+          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F9F7EF;color:#193845;font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;">' +
+          '<div style="max-width:360px;border:1px solid rgba(89,123,101,.2);border-radius:24px;background:white;padding:20px;box-shadow:0 12px 40px rgba(25,56,69,.12);">' +
+          '<strong style="display:block;font-size:18px;margin-bottom:8px;color:#2F4D3C;">StoryBridge could not start</strong>' +
+          '<span style="font-size:13px;line-height:1.5;">' + message + '</span>' +
+          '</div></div>';
+      };
+      window.addEventListener('error', function (event) {
+        var details = event.message || 'The app bundle failed before React could start.';
+        if (event.filename) {
+          details += ' at ' + event.filename;
+          if (event.lineno) details += ':' + event.lineno;
+          if (event.colno) details += ':' + event.colno;
+        }
+        if (event.error && event.error.stack) {
+          details += ' ' + event.error.stack;
+        }
+        window.__storybridgeBootError(details);
+      });
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event.reason && (event.reason.message || String(event.reason));
+        window.__storybridgeBootError(reason || 'The app hit an async startup error.');
+      });
+      window.setTimeout(function () {
+        var root = document.getElementById('root');
+        if (root && !root.childNodes.length) {
+          window.__storybridgeBootError(
+            window.__storybridgeBootMessage ||
+              'The app script did not finish loading. Refresh the page once, or reopen localhost:3000.'
+          );
+        }
+      }, 3500);
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
