@@ -934,19 +934,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Floating Action Button */}
-      {viewMode === 'slideshow' && (
-      <div className="fixed bottom-24 left-0 right-0 z-30 flex justify-center max-[360px]:hidden sm:hidden">
-        <button 
-          onClick={() => openCreateAgent()}
-          aria-label="Create lesson"
-          className="w-20 h-20 max-[360px]:h-16 max-[360px]:w-16 bg-brand-primary hover:bg-brand-dark text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgb(89,123,101,0.4)] transition-all hover:scale-110 active:scale-95 group border-4 border-white"
-        >
-          <span className="text-4xl max-[360px]:text-3xl font-light group-hover:rotate-90 transition-transform duration-300">+</span>
-        </button>
-      </div>
-      )}
-
       {/* Footer Toggle */}
       <footer className={cn(
         'flex items-end justify-center',
@@ -956,7 +943,7 @@ export default function App() {
           <button 
             onClick={() => setViewMode('slideshow')}
             className={cn(
-              "flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-all max-[360px]:gap-1 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs",
+              "flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold transition-all max-[430px]:gap-1 max-[430px]:px-3 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs sm:px-6",
               viewMode === 'slideshow' ? "bg-brand-light text-brand-dark" : "text-brand-text/60 hover:text-brand-text"
             )}
           >
@@ -968,7 +955,7 @@ export default function App() {
               type="button"
               onClick={() => openCreateAgent()}
               aria-label="Create lesson"
-              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-primary text-white shadow-sm transition-transform active:scale-95 max-[360px]:flex"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-primary text-white shadow-sm transition-transform active:scale-95 max-[360px]:h-10 max-[360px]:w-10 sm:hidden"
             >
               <Plus size={22} />
             </button>
@@ -976,7 +963,7 @@ export default function App() {
           <button 
             onClick={() => setViewMode('showtime')}
             className={cn(
-              "flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-all max-[360px]:gap-1 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs",
+              "flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold transition-all max-[430px]:gap-1 max-[430px]:px-3 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs sm:px-6",
               viewMode === 'showtime' ? "bg-brand-light text-brand-dark" : "text-brand-text/60 hover:text-brand-text"
             )}
           >

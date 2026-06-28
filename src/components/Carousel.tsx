@@ -364,21 +364,27 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
           </div>
 
           <div className="flex items-center gap-2 text-sm font-extrabold text-brand-text/65">
-            <button
-              type="button"
-              aria-label="Previous slide"
-              onClick={prevSlide}
-              disabled={currentIndex === 0}
+	      <button
+	        type="button"
+	        aria-label="Previous slide"
+	        onClick={event => {
+	          event.stopPropagation();
+	          prevSlide();
+	        }}
+	        disabled={currentIndex === 0}
               className="rounded-full p-2 transition-colors hover:bg-brand-light disabled:opacity-30"
             >
               <ChevronLeft size={19} />
             </button>
             <span>{currentIndex + 1} / {slides.length}</span>
-            <button
-              type="button"
-              aria-label="Next slide"
-              onClick={nextSlide}
-              disabled={currentIndex === slides.length - 1}
+	      <button
+	        type="button"
+	        aria-label="Next slide"
+	        onClick={event => {
+	          event.stopPropagation();
+	          nextSlide();
+	        }}
+	        disabled={currentIndex === slides.length - 1}
               className="rounded-full p-2 transition-colors hover:bg-brand-light disabled:opacity-30"
             >
               <ChevronRight size={19} />
@@ -404,11 +410,14 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
 
   const slideshowPlayer = () => (
     <div className="relative mx-auto flex h-[54dvh] min-h-[330px] w-full max-w-6xl items-center justify-center overflow-hidden px-4 max-[430px]:h-[46dvh] max-[430px]:min-h-[285px] max-[430px]:px-2 max-[360px]:h-[44dvh] max-[360px]:min-h-[245px] sm:h-[54vh] sm:min-h-[360px] sm:px-12">
-      <button
-        type="button"
-        aria-label="Previous slide"
-        onClick={prevSlide}
-        disabled={currentIndex === 0}
+	            <button
+	              type="button"
+	              aria-label="Previous slide"
+	              onClick={event => {
+	                event.stopPropagation();
+	                prevSlide();
+	              }}
+	              disabled={currentIndex === 0}
         className={cn(
           'absolute left-4 z-20 hidden rounded-full bg-white p-3 text-brand-primary shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-30 sm:block',
           currentIndex > 0 && 'hover:bg-brand-light hover:scale-105 active:scale-95',
@@ -417,11 +426,14 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
         <ChevronLeft size={24} />
       </button>
 
-      <button
-        type="button"
-        aria-label="Next slide"
-        onClick={nextSlide}
-        disabled={currentIndex === slides.length - 1}
+	            <button
+	              type="button"
+	              aria-label="Next slide"
+	              onClick={event => {
+	                event.stopPropagation();
+	                nextSlide();
+	              }}
+	              disabled={currentIndex === slides.length - 1}
         className={cn(
           'absolute right-4 z-20 hidden rounded-full bg-white p-3 text-brand-primary shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-30 sm:block',
           currentIndex < slides.length - 1 && 'hover:bg-brand-light hover:scale-105 active:scale-95',
@@ -477,13 +489,31 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
                   </button>
 
                   <div className="flex items-center gap-2 text-sm font-extrabold text-brand-text/60">
-                    <button type="button" aria-label="Previous slide" onClick={prevSlide} disabled={currentIndex === 0} className="p-2 disabled:opacity-30 sm:hidden">
-                      <ChevronLeft size={20} />
-                    </button>
-                    <span>{index + 1} / {slides.length}</span>
-                    <button type="button" aria-label="Next slide" onClick={nextSlide} disabled={currentIndex === slides.length - 1} className="p-2 disabled:opacity-30 sm:hidden">
-                      <ChevronRight size={20} />
-                    </button>
+	                    <button
+	                      type="button"
+	                      aria-label="Previous slide"
+	                      onClick={event => {
+	                        event.stopPropagation();
+	                        prevSlide();
+	                      }}
+	                      disabled={currentIndex === 0}
+	                      className="p-2 disabled:opacity-30 sm:hidden"
+	                    >
+	                      <ChevronLeft size={20} />
+	                    </button>
+	                    <span>{index + 1} / {slides.length}</span>
+	                    <button
+	                      type="button"
+	                      aria-label="Next slide"
+	                      onClick={event => {
+	                        event.stopPropagation();
+	                        nextSlide();
+	                      }}
+	                      disabled={currentIndex === slides.length - 1}
+	                      className="p-2 disabled:opacity-30 sm:hidden"
+	                    >
+	                      <ChevronRight size={20} />
+	                    </button>
                     <button
                       type="button"
                       onClick={() => setIsGuideOpen(true)}

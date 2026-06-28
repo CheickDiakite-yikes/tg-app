@@ -54,3 +54,11 @@ Date: 2026-06-28
 - Show Time now supports horizontal swipe gestures across slides, in addition to the existing arrow controls.
 - Added a no-cost `/api/ai-status` endpoint and activity-panel readiness chips for image and video generation.
 - Browser evidence is in `/tmp/storybridge-bottom-swipe-video-2026-06-28`, including `01-library-bottom-safe-390x844.png`, `02-activity-video-ready-390x844.png`, and `03-showtime-after-swipe-390x844.png`.
+
+## Slideshow Arrow Hit Target Fix
+
+Date: 2026-06-28
+
+- Fixed a slideshow navigation bug where the mobile floating create control could sit over the slide footer and absorb next/previous arrow taps.
+- Create now lives inside the bottom mode bar on mobile, and slideshow/Show Time arrow clicks explicitly own their click events.
+- Browser evidence is in `/tmp/storybridge-arrow-fix-2026-06-28`, including `01-before-arrow-click-390x844.png` and `02-after-arrow-click-390x844.png`.
