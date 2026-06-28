@@ -1,8 +1,28 @@
-import React, { useState, useEffect } from 'react';
-import { BookOpen, Clock3, Leaf, Bell, Sparkles, Play, Presentation, X } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import {
+  Bell,
+  BookOpen,
+  Captions,
+  CheckCircle2,
+  Clock3,
+  Copy,
+  Download,
+  Leaf,
+  Play,
+  Plus,
+  Presentation,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  Type,
+  Wand2,
+  X,
+} from 'lucide-react';
 import Carousel from './components/Carousel';
 import CreateModal from './components/CreateModal';
-import { Lesson, Slide } from './types';
+import { ComfortSettings, Lesson, Slide, ViewMode } from './types';
 import { cn } from './lib/utils';
 
 const SAVED_LESSON_KEY = 'storybridge.savedLesson.v1';
@@ -12,6 +32,14 @@ const SAVED_LIBRARY_STORE = 'lessons';
 
 type SavedLesson = Lesson & {
   savedAt?: string;
+};
+
+type LibraryFilter = 'all' | 'slideshow' | 'showtime';
+
+const makeId = () => {
+  const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') return cryptoObj.randomUUID();
+  return `storybridge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
 const toSvgDataUrl = (svg: string) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
@@ -150,37 +178,62 @@ const starterVisuals = {
 const createStarterLesson = (): Lesson => ({
   id: 'initial',
   title: 'Classroom Habits',
+  objective: 'Practice simple classroom routines with calm, visual language.',
+  audience: 'K-2 autistic learners',
+  estimatedDuration: '3-5 minutes',
+  sensoryNotes: ['Use a calm pace and pause after each slide.', 'Offer pointing, speaking, typing, or gesturing as valid responses.'],
+  agentSummary: 'A starter visual lesson with predictable classroom routines.',
   slides: [
     {
       id: 's1',
       text: 'I can raise my hand and ask for help.',
+      narration: 'I can raise my hand and ask for help. A teacher can come over and listen.',
       imagePrompt: '',
       mediaType: 'image',
       mediaUrl: starterVisuals.help,
-      isLoading: false
+      isLoading: false,
+      mediaStatus: 'ready',
+      teacherNote: 'Pause and let students identify one way to ask for help.',
+      interactionCue: 'Invite a point, gesture, word, or typed response.',
+      sensoryGoal: 'Keep attention on one clear action.',
+      safetyNotes: [],
     },
     {
       id: 's2',
       text: 'We take breaks when we need to.',
+      narration: 'We take breaks when we need to. A break can help our bodies feel ready.',
       imagePrompt: '',
       mediaType: 'image',
       mediaUrl: starterVisuals.break,
-      isLoading: false
+      isLoading: false,
+      mediaStatus: 'ready',
+      teacherNote: 'Normalize breaks as a self-advocacy choice, not a reward or punishment.',
+      interactionCue: 'Ask students to choose a break signal that works for them.',
+      sensoryGoal: 'Support body awareness without pressure.',
+      safetyNotes: [],
     },
     {
       id: 's3',
       text: 'I can share when I am ready.',
+      narration: 'I can share when I am ready. I can use words, a gesture, or another way.',
       imagePrompt: '',
       mediaType: 'image',
       mediaUrl: starterVisuals.share,
-      isLoading: false
+      isLoading: false,
+      mediaStatus: 'ready',
+      teacherNote: 'Emphasize readiness and choice instead of forced participation.',
+      interactionCue: 'Offer multiple communication modes for sharing.',
+      sensoryGoal: 'Reduce social pressure and keep the scene predictable.',
+      safetyNotes: [],
     }
   ]
 });
 
 const isGeneratedLessonReady = (lesson?: Lesson | null) => {
   if (!lesson || lesson.id === 'initial') return false;
-  const mediaComplete = lesson.slides.every(slide => !slide.isLoading);
+  const mediaComplete = lesson.slides.every(slide =>
+    !slide.isLoading && !['queued', 'generating', 'polling'].includes(slide.mediaStatus || ''),
+  );
   const hasGeneratedMedia = lesson.slides.some(slide => Boolean(slide.mediaUrl));
   return mediaComplete && hasGeneratedMedia;
 };
@@ -325,7 +378,7 @@ const lessonThumb = (lesson: Lesson) =>
   lesson.slides.find(slide => Boolean(slide.mediaUrl))?.mediaUrl || starterVisuals.help;
 
 // Helper to poll video status
-async function pollVideo(operationName: string): Promise<string> {
+async function pollVideo(operationName: string, onProgress?: (message: string) => void): Promise<string> {
   const maxAttempts = 36;
   let attempts = 0;
 
@@ -333,6 +386,7 @@ async function pollVideo(operationName: string): Promise<string> {
     const check = async () => {
       try {
         attempts += 1;
+        onProgress?.(`Rendering video ${attempts}/${maxAttempts}. This can take a few minutes.`);
         const res = await fetch('/api/video-status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -361,9 +415,27 @@ async function pollVideo(operationName: string): Promise<string> {
 export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isComfortOpen, setIsComfortOpen] = useState(false);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [savedLessons, setSavedLessons] = useState<SavedLesson[]>([]);
-  const [viewMode, setViewMode] = useState<'slideshow' | 'showtime'>('slideshow');
+  const [viewMode, setViewMode] = useState<ViewMode>('slideshow');
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
+  const [generationDefaults, setGenerationDefaults] = useState({ size: '1K', ratio: '16:9' });
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [agentSeedPrompt, setAgentSeedPrompt] = useState<string | undefined>();
+  const [comfort, setComfort] = useState<ComfortSettings>(() => ({
+    captions: false,
+    largeText: false,
+    calmMotion:
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    ttsRate: 0.9,
+    autoplay: false,
+  }));
 
   useEffect(() => {
     const library = readSavedLibrary();
@@ -412,6 +484,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
     if (!isGeneratedLessonReady(activeLesson)) return;
 
     const compactActiveLesson = compactLessonForLocalStorage(activeLesson);
@@ -444,96 +522,313 @@ export default function App() {
     if (navigator.vibrate) navigator.vibrate(50);
     setActiveLesson(lesson);
     setViewMode(lesson.slides.some(slide => slide.mediaType === 'video') ? 'showtime' : 'slideshow');
+    setPendingDeleteId(null);
     setIsProfileOpen(false);
   };
 
-  const handleLessonCreated = (lesson: Lesson, size: string, ratio: string) => {
-    setActiveLesson(lesson);
-    
-    // Process media generation for each slide
-    lesson.slides.forEach(async (slide) => {
-      try {
-        if (slide.mediaType === 'image') {
-          const res = await fetch('/api/generate-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt: slide.imagePrompt,
-              slideText: slide.text,
-              size: size,
-              aspectRatio: ratio
-            })
-          });
-          const data = await res.json();
-          if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
-          if (data.imageUrl) {
-            updateSlideMedia(lesson.id, slide.id, data.imageUrl);
-          }
-        } else {
-          // Video
-          const res = await fetch('/api/generate-video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt: slide.videoPrompt || slide.imagePrompt,
-              slideText: slide.text,
-              aspectRatio: ratio
-            })
-          });
-          const data = await res.json();
-          if (!res.ok || data.error) throw new Error(data.error || 'Video generation failed');
-          if (data.operationName) {
-            const videoUrl = await pollVideo(data.operationName);
-            updateSlideMedia(lesson.id, slide.id, videoUrl);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to generate media for slide", slide.id, err);
-        clearSlideLoading(lesson.id, slide.id);
-      }
-    });
+  const humanizeMediaError = (err: unknown, mediaType: Slide['mediaType']) => {
+    const message = err instanceof Error ? err.message : String(err || '');
+    const lower = message.toLowerCase();
+
+    if (lower.includes('api key') || lower.includes('gemini_api_key')) {
+      return 'The Gemini key is needed before StoryBridge can create this visual.';
+    }
+
+    if (lower.includes('failed to fetch') || lower.includes('network')) {
+      return 'StoryBridge lost connection to the AI studio. Retry when the connection settles.';
+    }
+
+    if (lower.includes('quota') || lower.includes('rate')) {
+      return 'The AI studio is busy. Retry this visual in a moment.';
+    }
+
+    if (mediaType === 'video' && lower.includes('processing')) {
+      return 'The video is still rendering. Retry will check the studio again.';
+    }
+
+    return message || 'StoryBridge could not finish this visual.';
   };
 
-  const updateSlideMedia = (lessonId: string, slideId: string, url: string) => {
-    setActiveLesson(prev => {
-      if (!prev || prev.id !== lessonId) return prev;
-      return {
-        ...prev,
-        slides: prev.slides.map(s => 
-          s.id === slideId ? { ...s, mediaUrl: url, isLoading: false } : s
-        )
-      };
-    });
-  };
-
-  const clearSlideLoading = (lessonId: string, slideId: string) => {
+  const updateSlideState = (lessonId: string, slideId: string, patch: Partial<Slide>) => {
     setActiveLesson(prev => {
       if (!prev || prev.id !== lessonId) return prev;
       return {
         ...prev,
         slides: prev.slides.map(s =>
-          s.id === slideId ? { ...s, isLoading: false } : s
+          s.id === slideId ? { ...s, ...patch } : s
         )
       };
     });
   };
 
+  const updateSlideMedia = (lessonId: string, slideId: string, url: string) => {
+    updateSlideState(lessonId, slideId, {
+      mediaUrl: url,
+      isLoading: false,
+      mediaStatus: 'ready',
+      mediaProgress: 'Ready',
+      mediaError: undefined,
+    });
+  };
+
+  const generateSlideMedia = async (lessonId: string, slide: Slide, size: string, ratio: string) => {
+    try {
+      updateSlideState(lessonId, slide.id, {
+        isLoading: true,
+        mediaStatus: 'generating',
+        mediaProgress: slide.mediaType === 'video' ? 'Sending video request...' : 'Sending image request...',
+        mediaError: undefined,
+      });
+
+      if (slide.mediaType === 'image') {
+        const res = await fetch('/api/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: slide.imagePrompt,
+            slideText: slide.text,
+            size,
+            aspectRatio: ratio,
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
+        if (!data.imageUrl) throw new Error('Gemini did not return an image.');
+        updateSlideMedia(lessonId, slide.id, data.imageUrl);
+        return;
+      }
+
+      const res = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: slide.videoPrompt || slide.imagePrompt,
+          slideText: slide.text,
+          aspectRatio: ratio,
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Video generation failed');
+      if (!data.operationName) throw new Error('Video generation did not return an operation.');
+
+      updateSlideState(lessonId, slide.id, {
+        mediaStatus: 'polling',
+        mediaProgress: 'Video accepted. Waiting for the render...',
+        operationName: data.operationName,
+      });
+
+      const videoUrl = await pollVideo(data.operationName, message => {
+        updateSlideState(lessonId, slide.id, {
+          mediaStatus: 'polling',
+          mediaProgress: message,
+          operationName: data.operationName,
+        });
+      });
+      updateSlideMedia(lessonId, slide.id, videoUrl);
+    } catch (err) {
+      console.error('Failed to generate media for slide', slide.id, err);
+      updateSlideState(lessonId, slide.id, {
+        isLoading: false,
+        mediaStatus: 'error',
+        mediaProgress: undefined,
+        mediaError: humanizeMediaError(err, slide.mediaType),
+      });
+    }
+  };
+
+  const handleLessonCreated = (lesson: Lesson, size: string, ratio: string) => {
+    setGenerationDefaults({ size, ratio });
+    const nextLesson: Lesson = {
+      ...lesson,
+      slides: lesson.slides.map(slide => ({
+        ...slide,
+        isLoading: true,
+        mediaStatus: 'queued',
+        mediaProgress: slide.mediaType === 'video' ? 'Queued for video rendering.' : 'Queued for image generation.',
+        mediaError: undefined,
+      })),
+    };
+    setActiveLesson(nextLesson);
+    setViewMode(nextLesson.slides.some(slide => slide.mediaType === 'video') ? 'showtime' : 'slideshow');
+
+    nextLesson.slides.forEach(slide => {
+      void generateSlideMedia(nextLesson.id, slide, size, ratio);
+    });
+  };
+
+  const retrySlideMedia = (slideId: string) => {
+    const slide = activeLesson?.slides.find(item => item.id === slideId);
+    if (!activeLesson || !slide) return;
+    if (navigator.vibrate) navigator.vibrate(50);
+    void generateSlideMedia(activeLesson.id, slide, generationDefaults.size, generationDefaults.ratio);
+  };
+
+  const openCreateAgent = (prompt?: string) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    setPendingDeleteId(null);
+    setAgentSeedPrompt(prompt);
+    setIsModalOpen(true);
+  };
+
+  const reviseLessonWithAgent = (lesson: Lesson) => {
+    const prompt = [
+      `Revise "${lesson.title}" for my students.`,
+      lesson.objective ? `Current objective: ${lesson.objective}` : undefined,
+      `Keep it ${lesson.slides.length} slides unless a simpler structure is better.`,
+      'Make it calmer, age-appropriate, and preserve the strongest parts.',
+    ].filter(Boolean).join(' ');
+    openCreateAgent(prompt);
+    setIsProfileOpen(false);
+  };
+
+  const duplicateLesson = (lesson: SavedLesson) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    const duplicated: SavedLesson = {
+      ...lesson,
+      id: makeId(),
+      title: `${lesson.title} copy`,
+      savedAt: new Date().toISOString(),
+      slides: lesson.slides.map(slide => ({ ...slide, id: makeId() })),
+    };
+    setSavedLessons(prev => {
+      const next = [duplicated, ...prev].slice(0, 20);
+      writeSavedLibrary(next);
+      return next;
+    });
+    setActiveLesson(duplicated);
+    setViewMode(duplicated.slides.some(slide => slide.mediaType === 'video') ? 'showtime' : 'slideshow');
+    setIsProfileOpen(false);
+    setPendingDeleteId(null);
+    setNotice(`Duplicated "${lesson.title}".`);
+  };
+
+  const deleteLesson = (lessonId: string) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    if (pendingDeleteId !== lessonId) {
+      setPendingDeleteId(lessonId);
+      setNotice('Tap confirm delete to remove this lesson.');
+      return;
+    }
+
+    setSavedLessons(prev => {
+      const removedLesson = prev.find(lesson => lesson.id === lessonId);
+      const next = prev.filter(lesson => lesson.id !== lessonId);
+      writeSavedLibrary(next);
+      if (activeLesson?.id === lessonId) {
+        setActiveLesson(next[0] || createStarterLesson());
+        setViewMode(next[0]?.slides.some(slide => slide.mediaType === 'video') ? 'showtime' : 'slideshow');
+      }
+      setNotice(removedLesson ? `Deleted "${removedLesson.title}".` : 'Deleted lesson.');
+      return next;
+    });
+    setPendingDeleteId(null);
+  };
+
+  const exportLesson = (lesson: SavedLesson) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    const blob = new Blob([JSON.stringify(lesson, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${lesson.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'storybridge-lesson'}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice(`Exported "${lesson.title}".`);
+  };
+
+  const copyLessonSummary = async (lesson: SavedLesson) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    const summary = [
+      lesson.title,
+      lesson.objective,
+      `${lesson.slides.length} slides`,
+      ...lesson.slides.map((slide, index) => `${index + 1}. ${slide.text}`),
+    ].filter(Boolean).join('\n');
+
+    try {
+      await navigator.clipboard?.writeText(summary);
+      setNotice(`Copied summary for "${lesson.title}".`);
+    } catch (err) {
+      console.warn('Could not copy StoryBridge lesson summary', err);
+      setNotice('Could not copy summary. You can still export the lesson.');
+    }
+  };
+
+  const activeMediaJobs = useMemo(
+    () =>
+      (activeLesson?.slides || [])
+        .map((slide, index) => ({ slide, slideNumber: index + 1 }))
+        .filter(item => ['queued', 'generating', 'polling', 'error'].includes(item.slide.mediaStatus || '')),
+    [activeLesson?.slides],
+  );
+
+  const filteredSavedLessons = useMemo(() => {
+    const query = libraryQuery.trim().toLowerCase();
+    return savedLessons.filter(lesson => {
+      const isVideoLesson = lesson.slides.some(slide => slide.mediaType === 'video');
+      if (libraryFilter === 'slideshow' && isVideoLesson) return false;
+      if (libraryFilter === 'showtime' && !isVideoLesson) return false;
+      if (!query) return true;
+
+      return [
+        lesson.title,
+        lesson.objective,
+        lesson.audience,
+        lesson.agentSummary,
+        ...lesson.slides.map(slide => slide.text),
+      ].filter(Boolean).some(value => value!.toLowerCase().includes(query));
+    });
+  }, [libraryFilter, libraryQuery, savedLessons]);
+
+  const completionCount = activeLesson?.slides.filter(slide => slide.mediaStatus === 'ready' || slide.mediaUrl).length || 0;
+  const totalSlides = activeLesson?.slides.length || 0;
+
   return (
     <div className="min-h-screen bg-bg-card flex flex-col font-sans selection:bg-brand-primary selection:text-white">
       
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-5 sm:px-12">
-        <div className="flex items-center gap-3 cursor-pointer">
-          <div className="bg-brand-primary p-2 rounded-xl text-white">
-            <Leaf size={24} />
+      <header className="flex items-center justify-between px-3 py-3 sm:px-12 sm:py-5">
+        <div className="flex items-center gap-2 cursor-pointer sm:gap-3">
+          <div className="bg-brand-primary p-1.5 rounded-xl text-white sm:p-2">
+            <Leaf size={22} />
           </div>
-          <span className="font-extrabold text-2xl tracking-tight text-brand-dark">StoryBridge</span>
+          <span className="font-extrabold text-lg tracking-tight text-brand-dark sm:text-2xl">StoryBridge</span>
         </div>
         
-        <div className="flex items-center gap-4">
-          <button className="p-3 bg-white rounded-full text-brand-text hover:bg-brand-light transition-colors relative">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <button
+            type="button"
+            onClick={() => openCreateAgent()}
+            aria-label="Create lesson"
+            className="hidden items-center gap-2 rounded-full bg-brand-primary px-4 py-3 text-sm font-extrabold text-white shadow-sm transition-transform active:scale-95 sm:inline-flex"
+          >
+            <Plus size={18} />
+            Create
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (navigator.vibrate) navigator.vibrate(50);
+              setIsActivityOpen(true);
+            }}
+            aria-label="Open generation activity"
+            className="p-2 bg-white rounded-full text-brand-text hover:bg-brand-light transition-colors relative sm:p-3"
+          >
             <Bell size={20} />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+            {activeMediaJobs.length > 0 && (
+              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (navigator.vibrate) navigator.vibrate(50);
+              setIsComfortOpen(true);
+            }}
+            aria-label="Open comfort controls"
+            className="p-2 bg-white rounded-full text-brand-text hover:bg-brand-light transition-colors sm:p-3"
+          >
+            <SlidersHorizontal size={20} />
           </button>
           <button
             type="button"
@@ -542,7 +837,7 @@ export default function App() {
               setIsProfileOpen(true);
             }}
             aria-label="Open teacher profile and saved slideshows"
-            className="w-12 h-12 rounded-full overflow-hidden border-2 border-white shadow-sm cursor-pointer hover:scale-105 transition-transform"
+            className="h-10 w-10 rounded-full overflow-hidden border-2 border-white shadow-sm cursor-pointer hover:scale-105 transition-transform sm:h-12 sm:w-12"
           >
             <img src={starterVisuals.teacher} alt="Profile" className="w-full h-full object-cover" />
           </button>
@@ -550,11 +845,57 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col justify-center py-8 relative">
-        <Carousel slides={activeLesson?.slides || []} />
+      <main className="relative flex flex-1 flex-col justify-center gap-2 py-1 sm:gap-5 sm:py-5">
+        {activeLesson && (
+          <section className="mx-auto w-full max-w-6xl px-5 sm:px-10">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h1 className="truncate text-xl font-extrabold leading-tight text-brand-dark sm:text-2xl">
+                    {activeLesson.title}
+                  </h1>
+                  {activeLesson.id !== 'initial' && (
+                    <button
+                      type="button"
+                      onClick={() => reviseLessonWithAgent(activeLesson)}
+                      className="shrink-0 rounded-full bg-white p-2 text-brand-primary shadow-sm transition-transform active:scale-95 max-[360px]:hidden"
+                      aria-label="Revise this lesson with the agent"
+                    >
+                      <Wand2 size={15} />
+                    </button>
+                  )}
+                </div>
+                <p className={cn(
+                  'mt-1 line-clamp-2 max-w-2xl text-sm font-semibold leading-snug text-brand-text/65 max-[360px]:hidden',
+                  viewMode === 'showtime' && 'hidden sm:block',
+                )}>
+                  {activeLesson.objective || activeLesson.agentSummary || 'A calm visual lesson for classroom learning.'}
+                </p>
+              </div>
+              <div className={cn(
+                'flex shrink-0 flex-wrap gap-2 text-xs font-extrabold text-brand-text/60 max-[360px]:hidden',
+                viewMode === 'showtime' && 'hidden min-[430px]:flex',
+              )}>
+                {activeLesson.audience && <span className="rounded-full bg-white px-3 py-2 shadow-sm">{activeLesson.audience}</span>}
+                {activeLesson.estimatedDuration && <span className="rounded-full bg-white px-3 py-2 shadow-sm">{activeLesson.estimatedDuration}</span>}
+                <span className="rounded-full bg-white px-3 py-2 shadow-sm">
+                  {completionCount}/{totalSlides} ready
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <Carousel
+          lesson={activeLesson}
+          viewMode={viewMode}
+          comfort={comfort}
+          onRetryMedia={retrySlideMedia}
+        />
         
         {/* Creation Hint */}
-        <div className="absolute bottom-32 sm:bottom-28 left-0 right-0 flex justify-center pointer-events-none z-10">
+        {viewMode === 'slideshow' && (
+        <div className="pointer-events-none absolute bottom-8 right-32 z-10 hidden justify-center lg:flex">
           <div className="flex items-center gap-4 bg-white/50 backdrop-blur-md px-6 py-3 rounded-full shadow-lg transform translate-y-6">
             <div>
               <p className="font-bold text-brand-text text-sm">Create anything with AI</p>
@@ -563,39 +904,52 @@ export default function App() {
             <Sparkles size={16} className="text-brand-primary" />
           </div>
         </div>
+        )}
       </main>
 
       {/* Floating Action Button */}
-      <div className="fixed bottom-24 left-0 right-0 flex justify-center z-30">
+      {viewMode === 'slideshow' && (
+      <div className="fixed bottom-24 left-0 right-0 z-30 flex justify-center max-[360px]:hidden sm:hidden">
         <button 
-          onClick={() => {
-            if (navigator.vibrate) navigator.vibrate(50);
-            setIsModalOpen(true);
-          }}
+          onClick={() => openCreateAgent()}
           aria-label="Create lesson"
-          className="w-20 h-20 bg-brand-primary hover:bg-brand-dark text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgb(89,123,101,0.4)] transition-all hover:scale-110 active:scale-95 group border-4 border-white"
+          className="w-20 h-20 max-[360px]:h-16 max-[360px]:w-16 bg-brand-primary hover:bg-brand-dark text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgb(89,123,101,0.4)] transition-all hover:scale-110 active:scale-95 group border-4 border-white"
         >
-          <span className="text-4xl font-light group-hover:rotate-90 transition-transform duration-300">+</span>
+          <span className="text-4xl max-[360px]:text-3xl font-light group-hover:rotate-90 transition-transform duration-300">+</span>
         </button>
       </div>
+      )}
 
       {/* Footer Toggle */}
-      <footer className="h-24 flex items-end justify-center pb-6">
-        <div className="bg-white rounded-full p-1.5 shadow-md flex items-center gap-2 border border-brand-primary/10">
+      <footer className={cn(
+        'flex items-end justify-center',
+        viewMode === 'showtime' ? 'h-16 pb-3' : 'h-24 pb-6 max-[360px]:h-14 max-[360px]:pb-1',
+      )}>
+        <div className="flex items-center gap-2 rounded-full border border-brand-primary/10 bg-white p-1.5 shadow-md max-[360px]:gap-1 max-[360px]:p-1">
           <button 
             onClick={() => setViewMode('slideshow')}
             className={cn(
-              "px-6 py-2.5 rounded-full flex items-center gap-2 font-bold text-sm transition-all",
+              "flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-all max-[360px]:gap-1 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs",
               viewMode === 'slideshow' ? "bg-brand-light text-brand-dark" : "text-brand-text/60 hover:text-brand-text"
             )}
           >
             <Presentation size={18} />
             Slide Show
           </button>
+          {viewMode === 'slideshow' && (
+            <button
+              type="button"
+              onClick={() => openCreateAgent()}
+              aria-label="Create lesson"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-primary text-white shadow-sm transition-transform active:scale-95 max-[360px]:flex"
+            >
+              <Plus size={22} />
+            </button>
+          )}
           <button 
             onClick={() => setViewMode('showtime')}
             className={cn(
-              "px-6 py-2.5 rounded-full flex items-center gap-2 font-bold text-sm transition-all",
+              "flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-all max-[360px]:gap-1 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs",
               viewMode === 'showtime' ? "bg-brand-light text-brand-dark" : "text-brand-text/60 hover:text-brand-text"
             )}
           >
@@ -609,106 +963,328 @@ export default function App() {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onLessonCreated={handleLessonCreated}
+        initialPrompt={agentSeedPrompt}
+        onInitialPromptConsumed={() => setAgentSeedPrompt(undefined)}
       />
 
-      {isProfileOpen && (
+      {notice && (
+        <div className="pointer-events-none fixed left-1/2 top-20 z-[70] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-3xl border border-brand-primary/10 bg-white px-4 py-3 text-sm font-extrabold text-brand-dark shadow-lg">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={18} className="shrink-0 text-brand-primary" />
+            <span className="min-w-0">{notice}</span>
+          </div>
+        </div>
+      )}
+
+      {isComfortOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-brand-text/35 px-0 backdrop-blur-sm sm:items-center sm:px-4">
           <button
             type="button"
-            aria-label="Close profile"
+            aria-label="Dismiss comfort backdrop"
             className="absolute inset-0 cursor-default"
-            onClick={() => setIsProfileOpen(false)}
+            onClick={() => setIsComfortOpen(false)}
           />
-          <section className="relative flex h-[88dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:h-[78vh] sm:max-h-[760px] sm:rounded-[2rem]">
-            <div className="flex items-center justify-between border-b border-brand-primary/10 bg-white px-5 py-4 sm:px-6">
-              <div className="flex min-w-0 items-center gap-3">
-                <img
-                  src={starterVisuals.teacher}
-                  alt=""
-                  className="h-12 w-12 shrink-0 rounded-2xl border-2 border-bg-card object-cover"
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-lg font-extrabold text-brand-dark">Teacher Library</p>
-                  <p className="truncate text-xs font-bold text-brand-text/55">
-                    {savedLessons.length
-                      ? `${savedLessons.length} saved visual lesson${savedLessons.length === 1 ? '' : 's'}`
-                      : 'Saved slideshows will appear here'}
-                  </p>
-                </div>
+          <section className="relative w-full max-w-md overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:rounded-[2rem]">
+            <div className="flex items-center justify-between border-b border-brand-primary/10 bg-white px-5 py-4">
+              <div>
+                <p className="text-lg font-extrabold text-brand-dark">Comfort Controls</p>
+                <p className="text-xs font-bold text-brand-text/55">Keep viewing calm and readable.</p>
               </div>
               <button
                 type="button"
-                onClick={() => setIsProfileOpen(false)}
-                aria-label="Close profile"
+                onClick={() => setIsComfortOpen(false)}
+                aria-label="Close comfort controls"
                 className="rounded-full p-2 text-brand-text/60 transition-colors hover:bg-brand-light"
               >
                 <X size={22} />
               </button>
             </div>
+            <div className="space-y-3 px-5 py-4">
+              {[
+                {
+                  key: 'captions',
+                  icon: Captions,
+                  title: 'Captions',
+                  detail: 'Show narration below each visual.',
+                },
+                {
+                  key: 'largeText',
+                  icon: Type,
+                  title: 'Larger transcript',
+                  detail: 'Increase caption size for shared viewing.',
+                },
+                {
+                  key: 'calmMotion',
+                  icon: SlidersHorizontal,
+                  title: 'Calmer motion',
+                  detail: 'Reduce springy slide motion and swipe animation.',
+                },
+                {
+                  key: 'autoplay',
+                  icon: Play,
+                  title: 'Show Time auto-advance',
+                  detail: 'Advance slowly when Show Time is playing.',
+                },
+              ].map(option => {
+                const Icon = option.icon;
+                const key = option.key as keyof Pick<ComfortSettings, 'captions' | 'largeText' | 'calmMotion' | 'autoplay'>;
+                return (
+                  <label key={option.key} className="flex items-center gap-3 rounded-3xl bg-white p-4 shadow-sm">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-light text-brand-primary">
+                      <Icon size={19} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-extrabold text-brand-dark">{option.title}</span>
+                      <span className="block text-xs font-bold leading-snug text-brand-text/55">{option.detail}</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(comfort[key])}
+                      onChange={event => setComfort(prev => ({ ...prev, [key]: event.target.checked }))}
+                      className="h-5 w-5 accent-brand-primary"
+                    />
+                  </label>
+                );
+              })}
+              <label className="block rounded-3xl bg-white p-4 shadow-sm">
+                <span className="flex items-center justify-between text-sm font-extrabold text-brand-dark">
+                  Listen speed
+                  <span className="text-brand-text/60">{comfort.ttsRate.toFixed(1)}x</span>
+                </span>
+                <input
+                  type="range"
+                  min="0.7"
+                  max="1.2"
+                  step="0.1"
+                  value={comfort.ttsRate}
+                  onChange={event => setComfort(prev => ({ ...prev, ttsRate: Number(event.target.value) }))}
+                  className="mt-3 w-full accent-brand-primary"
+                />
+              </label>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isActivityOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-brand-text/35 px-0 backdrop-blur-sm sm:items-center sm:px-4">
+          <button
+            type="button"
+            aria-label="Dismiss activity backdrop"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setIsActivityOpen(false)}
+          />
+          <section className="relative w-full max-w-lg overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:rounded-[2rem]">
+            <div className="flex items-center justify-between border-b border-brand-primary/10 bg-white px-5 py-4">
+              <div>
+                <p className="text-lg font-extrabold text-brand-dark">Generation Activity</p>
+                <p className="text-xs font-bold text-brand-text/55">
+                  {activeMediaJobs.length ? `${activeMediaJobs.length} item${activeMediaJobs.length === 1 ? '' : 's'} need attention` : 'Everything is calm and ready.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsActivityOpen(false)}
+                aria-label="Close activity"
+                className="rounded-full p-2 text-brand-text/60 transition-colors hover:bg-brand-light"
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <div className="max-h-[65dvh] space-y-3 overflow-y-auto px-5 py-4">
+              {activeMediaJobs.length ? activeMediaJobs.map(({ slide, slideNumber }) => (
+                <div key={slide.id} className="rounded-3xl bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-extrabold text-brand-dark">Slide {slideNumber}: {slide.text}</p>
+                      <p className="mt-1 text-xs font-bold text-brand-text/60">
+                        {slide.mediaError || slide.mediaProgress || 'Queued for generation.'}
+                      </p>
+                    </div>
+                    {slide.mediaStatus === 'error' ? (
+                      <button
+                        type="button"
+                        onClick={() => retrySlideMedia(slide.id)}
+                        className="shrink-0 rounded-full bg-brand-light p-2 text-brand-primary"
+                        aria-label={`Retry ${slide.text}`}
+                      >
+                        <RefreshCw size={16} />
+                      </button>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-brand-light px-3 py-1 text-[11px] font-extrabold text-brand-dark">
+                        {slide.mediaStatus || 'queued'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )) : (
+                <div className="flex min-h-[220px] flex-col items-center justify-center text-center">
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-brand-primary shadow-sm">
+                    <CheckCircle2 size={28} />
+                  </div>
+                  <p className="text-lg font-extrabold text-brand-dark">No active generation jobs</p>
+                  <p className="mt-2 max-w-xs text-sm font-semibold leading-relaxed text-brand-text/60">
+                    New image and video progress will appear here while StoryBridge creates lesson media.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isProfileOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-brand-text/35 px-0 backdrop-blur-sm sm:items-center sm:px-4">
+          <button
+            type="button"
+            aria-label="Dismiss profile backdrop"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setIsProfileOpen(false)}
+          />
+          <section className="relative flex h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:h-[82vh] sm:max-h-[820px] sm:rounded-[2rem]">
+            <div className="border-b border-brand-primary/10 bg-white px-5 py-4 sm:px-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <img
+                    src={starterVisuals.teacher}
+                    alt=""
+                    className="h-12 w-12 shrink-0 rounded-2xl border-2 border-bg-card object-cover"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-extrabold text-brand-dark">Teacher Library</p>
+                    <p className="truncate text-xs font-bold text-brand-text/55">
+                      {savedLessons.length
+                        ? `${savedLessons.length} saved visual lesson${savedLessons.length === 1 ? '' : 's'}`
+                        : 'Saved slideshows will appear here'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsProfileOpen(false)}
+                  aria-label="Close profile"
+                  className="rounded-full p-2 text-brand-text/60 transition-colors hover:bg-brand-light"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <label className="relative min-w-0 flex-1">
+                  <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text/45" />
+                  <input
+                    value={libraryQuery}
+                    onChange={event => setLibraryQuery(event.target.value)}
+                    placeholder="Search lessons, topics, or slides..."
+                    className="w-full rounded-full bg-brand-light py-3 pl-11 pr-4 text-sm font-bold text-brand-text outline-none focus:ring-2 focus:ring-brand-primary"
+                  />
+                </label>
+                <div className="flex rounded-full bg-brand-light p-1">
+                  {[
+                    ['all', 'All'],
+                    ['slideshow', 'Slides'],
+                    ['showtime', 'Show Time'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setLibraryFilter(value as LibraryFilter)}
+                      className={cn(
+                        'rounded-full px-4 py-2 text-xs font-extrabold transition-colors',
+                        libraryFilter === value ? 'bg-white text-brand-dark shadow-sm' : 'text-brand-text/55',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-              {savedLessons.length ? (
+              {filteredSavedLessons.length ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {savedLessons.map(lesson => {
+                  {filteredSavedLessons.map(lesson => {
                     const isActive = lesson.id === activeLesson?.id;
                     const videoCount = lesson.slides.filter(slide => slide.mediaType === 'video').length;
+                    const readyCount = lesson.slides.filter(slide => slide.mediaUrl || slide.mediaStatus === 'ready').length;
+                    const thumb = lessonThumb(lesson);
                     return (
-                      <button
+                      <article
                         key={lesson.id}
-                        type="button"
-                        onClick={() => openSavedLesson(lesson)}
                         className={cn(
                           'group overflow-hidden rounded-3xl border bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
                           isActive ? 'border-brand-primary/35 ring-2 ring-brand-primary/10' : 'border-brand-primary/10',
                         )}
                       >
-                        <div className="aspect-[16/9] bg-brand-light">
-                          {lessonThumb(lesson)?.startsWith('/api/video-download') ? (
-                            <video
-                              src={lessonThumb(lesson)}
-                              className="h-full w-full object-cover"
-                              muted
-                              playsInline
-                            />
-                          ) : (
-                            <img
-                              src={lessonThumb(lesson)}
-                              alt=""
-                              className="h-full w-full object-cover"
-                              referrerPolicy="no-referrer"
-                            />
-                          )}
-                        </div>
-                        <div className="space-y-3 p-4">
-                          <div>
-                            <div className="flex items-start justify-between gap-2">
-                              <h2 className="line-clamp-2 text-base font-extrabold leading-tight text-brand-dark">
-                                {lesson.title}
-                              </h2>
-                              {isActive && (
-                                <span className="shrink-0 rounded-full bg-brand-light px-2 py-1 text-[10px] font-extrabold text-brand-dark">
-                                  Open
-                                </span>
-                              )}
+                        <button type="button" onClick={() => openSavedLesson(lesson)} className="block w-full text-left">
+                          <div className="aspect-[16/9] bg-brand-light">
+                            {thumb?.startsWith('/api/video-download') ? (
+                              <video src={thumb} className="h-full w-full object-cover" muted playsInline />
+                            ) : (
+                              <img src={thumb} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                            )}
+                          </div>
+                          <div className="space-y-3 p-4">
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <h2 className="line-clamp-2 text-base font-extrabold leading-tight text-brand-dark">
+                                  {lesson.title}
+                                </h2>
+                                {isActive && (
+                                  <span className="shrink-0 rounded-full bg-brand-light px-2 py-1 text-[10px] font-extrabold text-brand-dark">
+                                    Open
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs font-semibold leading-snug text-brand-text/60">
+                                {lesson.objective || lesson.slides[0]?.text || 'Visual classroom lesson'}
+                              </p>
                             </div>
-                            <p className="mt-1 line-clamp-2 text-xs font-semibold leading-snug text-brand-text/60">
-                              {lesson.objective || lesson.slides[0]?.text || 'Visual classroom lesson'}
-                            </p>
-                          </div>
 
-                          <div className="flex items-center justify-between gap-3 text-xs font-extrabold text-brand-text/55">
-                            <span className="flex items-center gap-1.5">
-                              <BookOpen size={14} />
-                              {lesson.slides.length} slide{lesson.slides.length === 1 ? '' : 's'}
-                              {videoCount ? ` · ${videoCount} video` : ''}
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <Clock3 size={14} />
-                              {formatSavedAt(lesson.savedAt)}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2 text-xs font-extrabold text-brand-text/55">
+                              <span className="flex items-center gap-1.5 rounded-full bg-brand-light px-2.5 py-1">
+                                <BookOpen size={14} />
+                                {lesson.slides.length} slides
+                              </span>
+                              {videoCount ? (
+                                <span className="rounded-full bg-brand-light px-2.5 py-1">{videoCount} video</span>
+                              ) : null}
+                              <span className="rounded-full bg-brand-light px-2.5 py-1">{readyCount}/{lesson.slides.length} ready</span>
+                              <span className="flex items-center gap-1.5 rounded-full bg-brand-light px-2.5 py-1">
+                                <Clock3 size={14} />
+                                {formatSavedAt(lesson.savedAt)}
+                              </span>
+                            </div>
                           </div>
+                        </button>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-brand-primary/10 px-4 py-3">
+                          <button type="button" onClick={() => reviseLessonWithAgent(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Revise ${lesson.title} with the agent`}>
+                            <Wand2 size={16} />
+                          </button>
+                          <button type="button" onClick={() => duplicateLesson(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Duplicate ${lesson.title}`}>
+                            <Copy size={16} />
+                          </button>
+                          <button type="button" onClick={() => void copyLessonSummary(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Copy summary for ${lesson.title}`}>
+                            <Presentation size={16} />
+                          </button>
+                          <button type="button" onClick={() => exportLesson(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Export ${lesson.title}`}>
+                            <Download size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteLesson(lesson.id)}
+                            className={cn(
+                              'rounded-full bg-brand-light text-brand-primary',
+                              pendingDeleteId === lesson.id ? 'border border-brand-primary/20 px-3 py-2 text-[11px] font-extrabold text-brand-dark' : 'p-2',
+                            )}
+                            aria-label={pendingDeleteId === lesson.id ? `Confirm delete ${lesson.title}` : `Delete ${lesson.title}`}
+                          >
+                            {pendingDeleteId === lesson.id ? 'Confirm delete' : <Trash2 size={16} />}
+                          </button>
                         </div>
-                      </button>
+                      </article>
                     );
                   })}
                 </div>
@@ -717,15 +1293,19 @@ export default function App() {
                   <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-brand-primary shadow-sm">
                     <BookOpen size={30} />
                   </div>
-                  <h2 className="text-xl font-extrabold text-brand-dark">No saved slideshows yet</h2>
+                  <h2 className="text-xl font-extrabold text-brand-dark">
+                    {savedLessons.length ? 'No lessons match that search' : 'No saved slideshows yet'}
+                  </h2>
                   <p className="mt-2 max-w-sm text-sm font-semibold leading-relaxed text-brand-text/60">
-                    Generate a lesson and StoryBridge will keep it here so you can reopen it from your profile.
+                    {savedLessons.length
+                      ? 'Try another topic, grade band, or media type.'
+                      : 'Generate a lesson and StoryBridge will keep it here so you can reopen it from your profile.'}
                   </p>
                   <button
                     type="button"
                     onClick={() => {
                       setIsProfileOpen(false);
-                      setIsModalOpen(true);
+                      openCreateAgent();
                     }}
                     className="mt-5 rounded-full bg-brand-dark px-5 py-3 text-sm font-extrabold text-white shadow-md transition-transform active:scale-95"
                   >
