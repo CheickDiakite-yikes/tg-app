@@ -44,3 +44,13 @@ Date: 2026-06-28
 - Closed the smallest-phone header gap where the profile/library entry could be pushed offscreen by the wordmark and header controls.
 - On max-360px layouts, the header now preserves the leaf mark, keeps activity, comfort, and profile buttons visible, and collapses the wordmark only when the viewport is too tight.
 - Browser evidence is in `/tmp/storybridge-gap-closing-2026-06-28`, with the fixed phone proof at `03-after-header-iphone-se.png`.
+
+## Bottom Safety, Swipe, And Video Readiness Pass
+
+Date: 2026-06-28
+
+- Closed the profile-library bottom clipping issue by giving the sheet more usable height, bottom safe-area padding, and a compact saved-lesson card layout.
+- Saved lessons now sit in a horizontal scroll-snap rail on smaller screens, so teachers can swipe sideways through saved Slide Show and Show Time lessons.
+- Show Time now supports horizontal swipe gestures across slides, in addition to the existing arrow controls.
+- Added a no-cost `/api/ai-status` endpoint and activity-panel readiness chips for image and video generation.
+- Browser evidence is in `/tmp/storybridge-bottom-swipe-video-2026-06-28`, including `01-library-bottom-safe-390x844.png`, `02-activity-video-ready-390x844.png`, and `03-showtime-after-swipe-390x844.png`.

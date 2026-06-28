@@ -329,10 +329,19 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
 
   const showtimePlayer = () => (
     <div ref={containerRef} className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-8">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.6rem] bg-white shadow-xl">
-        <div className="relative flex min-h-[270px] flex-1 items-center justify-center overflow-hidden bg-brand-light sm:min-h-[430px]">
-          {renderMedia(activeSlide, true)}
-        </div>
+	      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.6rem] bg-white shadow-xl">
+	        <motion.div
+	          className="relative flex min-h-[270px] flex-1 items-center justify-center overflow-hidden bg-brand-light sm:min-h-[430px]"
+	          drag={slides.length > 1 ? 'x' : false}
+	          dragConstraints={{ left: 0, right: 0 }}
+	          dragElastic={0.16}
+	          onDragEnd={(e, { offset }) => {
+	            if (offset.x < -50) nextSlide();
+	            if (offset.x > 50) prevSlide();
+	          }}
+	        >
+	          {renderMedia(activeSlide, true)}
+	        </motion.div>
         {renderTranscript(activeSlide)}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-brand-primary/10 bg-white px-4 py-3">
           <div className="flex items-center gap-2">

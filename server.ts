@@ -235,6 +235,20 @@ function ensureGeminiKey(res: express.Response) {
   return false;
 }
 
+app.get("/api/ai-status", (_req, res) => {
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+
+  res.json({
+    geminiConfigured,
+    textGenerationReady: geminiConfigured,
+    imageGenerationReady: geminiConfigured,
+    videoGenerationReady: geminiConfigured && Boolean(GEMINI_VIDEO_MODEL),
+    textModel: GEMINI_TEXT_MODEL,
+    imageModel: GEMINI_IMAGE_MODEL,
+    videoModel: GEMINI_VIDEO_MODEL,
+  });
+});
+
 function getSession(sessionId: string) {
   const existing = chatSessions.get(sessionId);
   if (existing) {

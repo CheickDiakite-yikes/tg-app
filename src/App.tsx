@@ -35,6 +35,15 @@ type SavedLesson = Lesson & {
 };
 
 type LibraryFilter = 'all' | 'slideshow' | 'showtime';
+type AiStatus = {
+  geminiConfigured: boolean;
+  textGenerationReady: boolean;
+  imageGenerationReady: boolean;
+  videoGenerationReady: boolean;
+  textModel: string;
+  imageModel: string;
+  videoModel: string;
+};
 
 const makeId = () => {
   const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -426,6 +435,7 @@ export default function App() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [agentSeedPrompt, setAgentSeedPrompt] = useState<string | undefined>();
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [comfort, setComfort] = useState<ComfortSettings>(() => ({
     captions: false,
     largeText: false,
@@ -488,6 +498,23 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(null), 2800);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    void fetch('/api/ai-status')
+      .then(response => response.json())
+      .then((status: AiStatus) => {
+        if (isMounted) setAiStatus(status);
+      })
+      .catch(err => {
+        console.warn('Could not load StoryBridge AI status', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isGeneratedLessonReady(activeLesson)) return;
@@ -1122,11 +1149,29 @@ export default function App() {
                   <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-brand-primary shadow-sm">
                     <CheckCircle2 size={28} />
                   </div>
-                  <p className="text-lg font-extrabold text-brand-dark">No active generation jobs</p>
-                  <p className="mt-2 max-w-xs text-sm font-semibold leading-relaxed text-brand-text/60">
-                    New image and video progress will appear here while StoryBridge creates lesson media.
-                  </p>
-                </div>
+	                  <p className="text-lg font-extrabold text-brand-dark">No active generation jobs</p>
+	                  <p className="mt-2 max-w-xs text-sm font-semibold leading-relaxed text-brand-text/60">
+	                    {aiStatus?.videoGenerationReady
+	                      ? 'Image and video generation are configured. New progress will appear here while StoryBridge creates lesson media.'
+	                      : 'New image and video progress will appear here while StoryBridge creates lesson media.'}
+	                  </p>
+	                  {aiStatus && (
+	                    <div className="mt-4 flex flex-wrap justify-center gap-2 text-[11px] font-extrabold">
+	                      <span className={cn(
+	                        'rounded-full px-3 py-1.5',
+	                        aiStatus.imageGenerationReady ? 'bg-brand-light text-brand-dark' : 'bg-white text-brand-text/50',
+	                      )}>
+	                        Images {aiStatus.imageGenerationReady ? 'ready' : 'setup needed'}
+	                      </span>
+	                      <span className={cn(
+	                        'rounded-full px-3 py-1.5',
+	                        aiStatus.videoGenerationReady ? 'bg-brand-light text-brand-dark' : 'bg-white text-brand-text/50',
+	                      )}>
+	                        Video {aiStatus.videoGenerationReady ? 'ready' : 'setup needed'}
+	                      </span>
+	                    </div>
+	                  )}
+	                </div>
               )}
             </div>
           </section>
@@ -1141,15 +1186,15 @@ export default function App() {
             className="absolute inset-0 cursor-default"
             onClick={() => setIsProfileOpen(false)}
           />
-          <section className="relative flex h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:h-[82vh] sm:max-h-[820px] sm:rounded-[2rem]">
-            <div className="border-b border-brand-primary/10 bg-white px-5 py-4 sm:px-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <img
-                    src={starterVisuals.teacher}
-                    alt=""
-                    className="h-12 w-12 shrink-0 rounded-2xl border-2 border-bg-card object-cover"
-                  />
+	          <section className="relative flex h-[96dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:h-[84vh] sm:max-h-[820px] sm:rounded-[2rem]">
+	            <div className="border-b border-brand-primary/10 bg-white px-4 py-3 sm:px-6 sm:py-4">
+	              <div className="flex items-center justify-between gap-3">
+	                <div className="flex min-w-0 items-center gap-3">
+	                  <img
+	                    src={starterVisuals.teacher}
+	                    alt=""
+	                    className="h-11 w-11 shrink-0 rounded-2xl border-2 border-bg-card object-cover sm:h-12 sm:w-12"
+	                  />
                   <div className="min-w-0">
                     <p className="truncate text-lg font-extrabold text-brand-dark">Teacher Library</p>
                     <p className="truncate text-xs font-bold text-brand-text/55">
@@ -1169,17 +1214,17 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <label className="relative min-w-0 flex-1">
-                  <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text/45" />
-                  <input
+	              <div className="mt-3 flex flex-col gap-3 sm:mt-4 sm:flex-row">
+	                <label className="relative min-w-0 flex-1">
+	                  <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text/45" />
+	                  <input
                     value={libraryQuery}
                     onChange={event => setLibraryQuery(event.target.value)}
                     placeholder="Search lessons, topics, or slides..."
-                    className="w-full rounded-full bg-brand-light py-3 pl-11 pr-4 text-sm font-bold text-brand-text outline-none focus:ring-2 focus:ring-brand-primary"
-                  />
-                </label>
-                <div className="flex rounded-full bg-brand-light p-1">
+	                    className="w-full rounded-full bg-brand-light py-2.5 pl-11 pr-4 text-sm font-bold text-brand-text outline-none focus:ring-2 focus:ring-brand-primary sm:py-3"
+	                  />
+	                </label>
+	                <div className="flex overflow-x-auto rounded-full bg-brand-light p-1">
                   {[
                     ['all', 'All'],
                     ['slideshow', 'Slides'],
@@ -1201,31 +1246,31 @@ export default function App() {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-              {filteredSavedLessons.length ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {filteredSavedLessons.map(lesson => {
+	            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:pb-6">
+	              {filteredSavedLessons.length ? (
+	                <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pr-2 pb-4 sm:gap-4 lg:grid lg:grid-cols-2 lg:overflow-visible lg:pr-0 lg:pb-0" aria-label="Saved lesson carousel">
+	                  {filteredSavedLessons.map(lesson => {
                     const isActive = lesson.id === activeLesson?.id;
                     const videoCount = lesson.slides.filter(slide => slide.mediaType === 'video').length;
                     const readyCount = lesson.slides.filter(slide => slide.mediaUrl || slide.mediaStatus === 'ready').length;
                     const thumb = lessonThumb(lesson);
                     return (
-                      <article
-                        key={lesson.id}
-                        className={cn(
-                          'group overflow-hidden rounded-3xl border bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
-                          isActive ? 'border-brand-primary/35 ring-2 ring-brand-primary/10' : 'border-brand-primary/10',
-                        )}
-                      >
-                        <button type="button" onClick={() => openSavedLesson(lesson)} className="block w-full text-left">
-                          <div className="aspect-[16/9] bg-brand-light">
+	                      <article
+	                        key={lesson.id}
+	                        className={cn(
+	                          'group flex w-[82vw] max-w-[24rem] shrink-0 snap-center flex-col overflow-hidden rounded-3xl border bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md sm:w-[24rem] lg:w-auto lg:max-w-none',
+	                          isActive ? 'border-brand-primary/35 ring-2 ring-brand-primary/10' : 'border-brand-primary/10',
+	                        )}
+	                      >
+	                        <button type="button" onClick={() => openSavedLesson(lesson)} className="flex flex-1 flex-col text-left">
+	                          <div className="aspect-[16/8] bg-brand-light sm:aspect-[16/9]">
                             {thumb?.startsWith('/api/video-download') ? (
                               <video src={thumb} className="h-full w-full object-cover" muted playsInline />
                             ) : (
                               <img src={thumb} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                             )}
                           </div>
-                          <div className="space-y-3 p-4">
+	                          <div className="space-y-2 p-3 sm:space-y-3 sm:p-4">
                             <div>
                               <div className="flex items-start justify-between gap-2">
                                 <h2 className="line-clamp-2 text-base font-extrabold leading-tight text-brand-dark">
@@ -1237,9 +1282,9 @@ export default function App() {
                                   </span>
                                 )}
                               </div>
-                              <p className="mt-1 line-clamp-2 text-xs font-semibold leading-snug text-brand-text/60">
-                                {lesson.objective || lesson.slides[0]?.text || 'Visual classroom lesson'}
-                              </p>
+	                              <p className="mt-1 line-clamp-1 text-xs font-semibold leading-snug text-brand-text/60 sm:line-clamp-2">
+	                                {lesson.objective || lesson.slides[0]?.text || 'Visual classroom lesson'}
+	                              </p>
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2 text-xs font-extrabold text-brand-text/55">
@@ -1251,15 +1296,15 @@ export default function App() {
                                 <span className="rounded-full bg-brand-light px-2.5 py-1">{videoCount} video</span>
                               ) : null}
                               <span className="rounded-full bg-brand-light px-2.5 py-1">{readyCount}/{lesson.slides.length} ready</span>
-                              <span className="flex items-center gap-1.5 rounded-full bg-brand-light px-2.5 py-1">
-                                <Clock3 size={14} />
-                                {formatSavedAt(lesson.savedAt)}
-                              </span>
+	                              <span className="hidden items-center gap-1.5 rounded-full bg-brand-light px-2.5 py-1 sm:flex">
+	                                <Clock3 size={14} />
+	                                {formatSavedAt(lesson.savedAt)}
+	                              </span>
                             </div>
                           </div>
                         </button>
 
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-brand-primary/10 px-4 py-3">
+	                        <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-brand-primary/10 px-3 py-2.5 sm:px-4 sm:py-3">
                           <button type="button" onClick={() => reviseLessonWithAgent(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Revise ${lesson.title} with the agent`}>
                             <Wand2 size={16} />
                           </button>
