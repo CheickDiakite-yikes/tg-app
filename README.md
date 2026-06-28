@@ -406,6 +406,137 @@ Age guidance:
 - Use the CSS variables in `src/index.css` instead of adding unrelated color systems.
 - Keep generated media, secrets, and local test artifacts out of git.
 
+## Next Tasks And Product Roadmap
+
+StoryBridge currently works as a local-first prototype with real Gemini image and video generation. The next phase should move it toward a durable multi-user product for teachers and schools.
+
+### P0: Auth, Accounts, And Ownership
+
+- Add proper authentication for teachers.
+- Create user-owned workspaces so generated lessons belong to a teacher account instead of a browser profile.
+- Add basic profile fields: name, role, school or organization, grade bands served, preferred lesson tone, and default accessibility settings.
+- Protect all lesson and media routes by user session once auth exists.
+- Add server-side authorization checks so a teacher can only read, update, or delete their own lessons unless sharing is explicitly enabled.
+
+Suggested first implementation:
+
+```text
+Auth provider
+  -> user table
+  -> teacher profile table
+  -> session middleware in server.ts
+  -> user_id on every lesson and media record
+```
+
+### P0: Durable Database And Media Storage
+
+The current browser storage is useful for prototyping, but it is not enough for generated images and videos.
+
+- Add a real database for lessons, slides, prompts, generation jobs, teacher profiles, and sharing metadata.
+- Add object storage for generated images and MP4 files.
+- Store media URLs or object keys in the database instead of storing large base64 blobs in localStorage.
+- Persist generation job state so long video jobs survive refreshes, browser crashes, and device switches.
+- Track media status per slide: `queued`, `generating`, `ready`, `failed`, and `retrying`.
+- Add cleanup policies for failed or abandoned media operations.
+- Add migration scripts and seed data for local development.
+
+Recommended schema direction:
+
+```text
+users
+teacher_profiles
+lessons
+slides
+media_assets
+generation_jobs
+lesson_shares
+```
+
+Media storage needs:
+
+- Images: original generated image, optimized web image, thumbnail.
+- Videos: original MP4, poster thumbnail, duration, aspect ratio, playback URL.
+- Prompts: final prompt, slide text, model name, provider operation ID, safety notes.
+
+### P0: Production AI Job Pipeline
+
+Generation is currently request-driven from the app. A production version should make media generation more resilient.
+
+- Move long-running media work into a job queue.
+- Let the UI subscribe to generation updates instead of polling only from the open page.
+- Add retry behavior for recoverable Gemini or network failures.
+- Store provider operation IDs for Veo jobs.
+- Add rate limits per user and per school workspace.
+- Add cost tracking by model, media type, slide count, and user.
+- Add clear failure messages that help teachers recover without exposing provider internals.
+
+### P1: Profile And Library System
+
+The Teacher Library exists, but the profile system should become a real product surface.
+
+- Make the top-right profile entry the home for saved lessons, defaults, account settings, and generation history.
+- Add teacher defaults for grade band, classroom context, sensory preferences, language level, and preferred visual style.
+- Add folders, tags, favorites, and recently used lessons.
+- Add "duplicate and remix" for previous lessons.
+- Add lesson export options: JSON, printable PDF, image pack, and eventually share link.
+- Add shared school libraries so teams can reuse approved lessons.
+
+### P1: Better Slideshow And Show Time Authoring
+
+- Add a lightweight editor for slide text, narration, teacher notes, and prompts before generation.
+- Let teachers regenerate a single slide image or video without rebuilding the whole lesson.
+- Add reorder, duplicate, delete, and insert slide controls.
+- Add per-slide format choice: still image, gentle animated clip, or no media yet.
+- Add preview thumbnails for generated media.
+- Add teacher-facing notes that never appear in the learner slideshow.
+- Add more robust text-to-speech controls and browser support checks.
+
+### P1: Illustrative Design System
+
+The current design direction is calm, soft, and storybook-like. The next design pass should make that feel more custom and less generic.
+
+- Build a small custom illustration kit for StoryBridge icons, empty states, cards, and profile surfaces.
+- Add custom generated or hand-authored backgrounds that stay low-contrast and do not compete with lesson media.
+- Improve card composition for saved lessons, generation jobs, and profile panels.
+- Keep one-screen mobile ergonomics as a hard requirement, especially on iPhone SE and small Safari viewports.
+- Keep horizontal swipe patterns for lesson browsing where they reduce vertical scrolling.
+- Add motion polish that feels responsive without becoming overstimulating.
+- Keep color usage tied to `src/index.css` design tokens.
+
+### P1: Safety, Review, And Classroom Trust
+
+- Add a teacher review step before generated lessons are marked classroom-ready.
+- Add content warnings or extra review gates for sensitive topics.
+- Store safety notes returned by the agent and expose them in the teacher guide.
+- Add a reporting path for generated media issues, including bad text rendering or inappropriate imagery.
+- Add age-band checks before generation and before saving to shared libraries.
+- Add a school-safe prompt library for common topics like hygiene, transitions, self-advocacy, emotion naming, and classroom routines.
+
+### P2: Collaboration, Sharing, And Deployment
+
+- Add share links with permission controls.
+- Add school or district workspaces.
+- Add admin review for shared lesson templates.
+- Add usage analytics that respect privacy and avoid collecting student data.
+- Add deployment docs for the chosen hosting target.
+- Add environment-specific config for development, staging, and production.
+- Add monitoring for API failures, video job duration, and storage errors.
+
+### Suggested Implementation Order
+
+```text
+1. Choose auth and database stack.
+2. Add users, teacher_profiles, lessons, slides, media_assets, and generation_jobs.
+3. Move saved lessons from local browser storage to server-backed storage.
+4. Move generated images and videos to object storage.
+5. Make video jobs durable and resumable.
+6. Upgrade the profile/library page around real account data.
+7. Add single-slide editing and regeneration.
+8. Deepen the custom illustrative design system.
+9. Add classroom review, sharing, and school library workflows.
+10. Add production monitoring, cost controls, and deployment docs.
+```
+
 ## Troubleshooting
 
 ### `GEMINI_API_KEY is not configured`
