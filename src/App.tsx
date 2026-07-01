@@ -434,8 +434,11 @@ export default function App() {
   const [generationDefaults, setGenerationDefaults] = useState({ size: '1K', ratio: '16:9' });
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [agentSeedPrompt, setAgentSeedPrompt] = useState<string | undefined>();
+  const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<'new' | 'edit'>('new');
+  const [createSourceLesson, setCreateSourceLesson] = useState<Lesson | null>(null);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [hiddenCreateHintIds, setHiddenCreateHintIds] = useState<string[]>([]);
   const [comfort, setComfort] = useState<ComfortSettings>(() => ({
     captions: false,
     largeText: false,
@@ -561,12 +564,21 @@ export default function App() {
       return 'The Gemini key is needed before StoryBridge can create this visual.';
     }
 
-    if (lower.includes('failed to fetch') || lower.includes('network')) {
-      return 'StoryBridge lost connection to the AI studio. Retry when the connection settles.';
+    if (lower.includes('quota') || lower.includes('resource_exhausted') || lower.includes('429')) {
+      return 'Gemini quota is exhausted for this visual model. Check Google AI Studio billing and rate limits, then retry.';
     }
 
-    if (lower.includes('quota') || lower.includes('rate')) {
-      return 'The AI studio is busy. Retry this visual in a moment.';
+    if (
+      lower.includes('failed to fetch') ||
+      lower.includes('fetch failed') ||
+      lower.includes('network') ||
+      lower.includes('gemini_network_error')
+    ) {
+      return 'StoryBridge could not reach Gemini from the server. Check the server network, firewall, proxy, or VPN settings.';
+    }
+
+    if (lower.includes('rate')) {
+      return 'Gemini is rate limiting this visual. Wait a moment, then retry.';
     }
 
     if (mediaType === 'video' && lower.includes('processing')) {
@@ -690,22 +702,35 @@ export default function App() {
     void generateSlideMedia(activeLesson.id, slide, generationDefaults.size, generationDefaults.ratio);
   };
 
-  const openCreateAgent = (prompt?: string) => {
+  const openCreateChoice = () => {
     if (navigator.vibrate) navigator.vibrate(50);
     setPendingDeleteId(null);
-    setAgentSeedPrompt(prompt);
+    setIsCreateChoiceOpen(true);
+  };
+
+  const openNewCreateAgent = () => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    setPendingDeleteId(null);
+    setCreateMode('new');
+    setCreateSourceLesson(null);
+    setIsCreateChoiceOpen(false);
     setIsModalOpen(true);
   };
 
-  const reviseLessonWithAgent = (lesson: Lesson) => {
-    const prompt = [
-      `Revise "${lesson.title}" for my students.`,
-      lesson.objective ? `Current objective: ${lesson.objective}` : undefined,
-      `Keep it ${lesson.slides.length} slides unless a simpler structure is better.`,
-      'Make it calmer, age-appropriate, and preserve the strongest parts.',
-    ].filter(Boolean).join(' ');
-    openCreateAgent(prompt);
+  const openEditCreateAgent = (lesson: Lesson) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    setPendingDeleteId(null);
+    setCreateMode('edit');
+    setCreateSourceLesson(lesson);
+    setIsCreateChoiceOpen(false);
+    setIsModalOpen(true);
     setIsProfileOpen(false);
+  };
+
+  const openCreateForActiveLesson = () => {
+    if (!activeLesson) return;
+    setHiddenCreateHintIds(prev => (prev.includes(activeLesson.id) ? prev : [...prev, activeLesson.id]));
+    openEditCreateAgent(activeLesson);
   };
 
   const duplicateLesson = (lesson: SavedLesson) => {
@@ -809,6 +834,11 @@ export default function App() {
 
   const completionCount = activeLesson?.slides.filter(slide => slide.mediaStatus === 'ready' || slide.mediaUrl).length || 0;
   const totalSlides = activeLesson?.slides.length || 0;
+  const activeLessonHasVideo = activeLesson?.slides.some(slide => slide.mediaType === 'video') || false;
+  const canEditActiveLesson = Boolean(activeLesson && activeLesson.id !== 'initial' && activeLesson.slides.length > 0);
+  const showCreateHint =
+    Boolean(activeLesson && activeLesson.id !== 'initial' && totalSlides > 0) &&
+    !hiddenCreateHintIds.includes(activeLesson!.id);
 
   return (
     <div className="min-h-screen bg-bg-card flex flex-col font-sans selection:bg-brand-primary selection:text-white">
@@ -825,7 +855,7 @@ export default function App() {
         <div className="flex shrink-0 items-center gap-2 max-[360px]:gap-1.5 sm:gap-4">
           <button
             type="button"
-            onClick={() => openCreateAgent()}
+            onClick={openCreateChoice}
             aria-label="Create lesson"
             className="hidden items-center gap-2 rounded-full bg-brand-primary px-4 py-3 text-sm font-extrabold text-white shadow-sm transition-transform active:scale-95 sm:inline-flex"
           >
@@ -881,10 +911,10 @@ export default function App() {
                   <h1 className="truncate text-xl font-extrabold leading-tight text-brand-dark sm:text-2xl">
                     {activeLesson.title}
                   </h1>
-                  {activeLesson.id !== 'initial' && (
+                    {activeLesson.id !== 'initial' && (
                     <button
                       type="button"
-                      onClick={() => reviseLessonWithAgent(activeLesson)}
+                      onClick={() => openEditCreateAgent(activeLesson)}
                       className="shrink-0 rounded-full bg-white p-2 text-brand-primary shadow-sm transition-transform active:scale-95 max-[360px]:hidden"
                       aria-label="Revise this lesson with the agent"
                     >
@@ -920,17 +950,41 @@ export default function App() {
           onRetryMedia={retrySlideMedia}
         />
         
-        {/* Creation Hint */}
-        {viewMode === 'slideshow' && (
-        <div className="pointer-events-none absolute bottom-8 right-32 z-10 hidden justify-center lg:flex">
-          <div className="flex items-center gap-4 bg-white/50 backdrop-blur-md px-6 py-3 rounded-full shadow-lg transform translate-y-6">
-            <div>
-              <p className="font-bold text-brand-text text-sm">Create anything with AI</p>
-              <p className="text-xs text-brand-text/60">Chat, generate, and customize visual lessons in seconds.</p>
+        {showCreateHint && activeLesson && (
+          <div className="absolute bottom-3 left-4 right-4 z-20 flex justify-center sm:left-auto sm:right-8 sm:justify-end">
+            <div className="w-full max-w-sm rounded-[1.4rem] border border-brand-primary/10 bg-white/95 p-4 shadow-xl backdrop-blur-md">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-light text-brand-primary">
+                  <Sparkles size={20} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-extrabold text-brand-dark">Want to change this?</p>
+                  <p className="mt-1 text-xs font-semibold leading-relaxed text-brand-text/65">
+                    Use Create to edit this lesson or choose Show Time Video for a video version.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openCreateForActiveLesson}
+                      className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-3 py-2 text-xs font-extrabold text-white transition-transform active:scale-95"
+                    >
+                      <Wand2 size={14} />
+                      Create
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setHiddenCreateHintIds(prev => (prev.includes(activeLesson.id) ? prev : [...prev, activeLesson.id]))
+                      }
+                      className="rounded-full bg-brand-light px-3 py-2 text-xs font-extrabold text-brand-dark transition-colors hover:bg-brand-primary/10"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <Sparkles size={16} className="text-brand-primary" />
           </div>
-        </div>
         )}
       </main>
 
@@ -953,7 +1007,7 @@ export default function App() {
           {viewMode === 'slideshow' && (
             <button
               type="button"
-              onClick={() => openCreateAgent()}
+              onClick={openCreateChoice}
               aria-label="Create lesson"
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-primary text-white shadow-sm transition-transform active:scale-95 max-[360px]:h-10 max-[360px]:w-10 sm:hidden"
             >
@@ -961,10 +1015,21 @@ export default function App() {
             </button>
           )}
           <button 
-            onClick={() => setViewMode('showtime')}
+            onClick={() => {
+              if (activeLessonHasVideo) {
+                setViewMode('showtime');
+                return;
+              }
+              setNotice('Use Create to make a Show Time video version.');
+            }}
+            aria-disabled={!activeLessonHasVideo}
             className={cn(
               "flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold transition-all max-[430px]:gap-1 max-[430px]:px-3 max-[360px]:px-2.5 max-[360px]:py-2 max-[360px]:text-xs sm:px-6",
-              viewMode === 'showtime' ? "bg-brand-light text-brand-dark" : "text-brand-text/60 hover:text-brand-text"
+              viewMode === 'showtime'
+                ? "bg-brand-light text-brand-dark"
+                : activeLessonHasVideo
+                  ? "text-brand-text/60 hover:text-brand-text"
+                  : "text-brand-text/35 hover:text-brand-text/60"
             )}
           >
             <Play size={18} />
@@ -977,9 +1042,77 @@ export default function App() {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onLessonCreated={handleLessonCreated}
-        initialPrompt={agentSeedPrompt}
-        onInitialPromptConsumed={() => setAgentSeedPrompt(undefined)}
+        mode={createMode}
+        sourceLesson={createSourceLesson}
       />
+
+      {isCreateChoiceOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-brand-text/35 px-0 backdrop-blur-sm sm:items-center sm:px-4">
+          <button
+            type="button"
+            aria-label="Dismiss create choices"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setIsCreateChoiceOpen(false)}
+          />
+          <section className="relative w-full max-w-md overflow-hidden rounded-t-[2rem] bg-bg-card shadow-2xl sm:rounded-[2rem]">
+            <div className="flex items-center justify-between border-b border-brand-primary/10 bg-white px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-lg font-extrabold text-brand-dark">Create</p>
+                <p className="text-xs font-bold text-brand-text/55">Start fresh or work from the open lesson.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateChoiceOpen(false)}
+                aria-label="Close create choices"
+                className="rounded-full p-2 text-brand-text/60 transition-colors hover:bg-brand-light"
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => activeLesson && openEditCreateAgent(activeLesson)}
+                disabled={!canEditActiveLesson}
+                className={cn(
+                  'flex w-full items-start gap-3 rounded-[1.4rem] border px-4 py-4 text-left shadow-sm transition-all active:scale-[0.99]',
+                  canEditActiveLesson
+                    ? 'border-brand-primary/10 bg-white hover:border-brand-primary/30 hover:shadow-md'
+                    : 'cursor-not-allowed border-brand-primary/5 bg-white/55 opacity-55',
+                )}
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-light text-brand-primary">
+                  <Wand2 size={20} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-extrabold text-brand-dark">Edit current lesson</span>
+                  <span className="mt-1 block text-xs font-semibold leading-relaxed text-brand-text/60">
+                    {canEditActiveLesson
+                      ? `Revise "${activeLesson?.title}" or make a video version.`
+                      : 'Generate a lesson first, then this option will turn on.'}
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={openNewCreateAgent}
+                className="flex w-full items-start gap-3 rounded-[1.4rem] border border-brand-primary/10 bg-white px-4 py-4 text-left shadow-sm transition-all hover:border-brand-primary/30 hover:shadow-md active:scale-[0.99]"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-primary text-white">
+                  <Plus size={20} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-extrabold text-brand-dark">Create something new</span>
+                  <span className="mt-1 block text-xs font-semibold leading-relaxed text-brand-text/60">
+                    Start with a new slideshow, Show Time video, or both.
+                  </span>
+                </span>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {notice && (
         <div className="pointer-events-none fixed left-1/2 top-20 z-[70] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-3xl border border-brand-primary/10 bg-white px-4 py-3 text-sm font-extrabold text-brand-dark shadow-lg">
@@ -1292,7 +1425,7 @@ export default function App() {
                         </button>
 
 	                        <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-brand-primary/10 px-3 py-2.5 sm:px-4 sm:py-3">
-                          <button type="button" onClick={() => reviseLessonWithAgent(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Revise ${lesson.title} with the agent`}>
+                          <button type="button" onClick={() => openEditCreateAgent(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Revise ${lesson.title} with the agent`}>
                             <Wand2 size={16} />
                           </button>
                           <button type="button" onClick={() => duplicateLesson(lesson)} className="rounded-full bg-brand-light p-2 text-brand-primary" aria-label={`Duplicate ${lesson.title}`}>
@@ -1337,7 +1470,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setIsProfileOpen(false);
-                      openCreateAgent();
+                      openNewCreateAgent();
                     }}
                     className="mt-5 rounded-full bg-brand-dark px-5 py-3 text-sm font-extrabold text-white shadow-md transition-transform active:scale-95"
                   >

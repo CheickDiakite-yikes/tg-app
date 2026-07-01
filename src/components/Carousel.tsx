@@ -43,7 +43,15 @@ const hasTeacherGuide = (lesson: Lesson | null, slide?: Slide) =>
   );
 
 export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: CarouselProps) {
-  const slides = lesson?.slides || [];
+  const allSlides = lesson?.slides || [];
+  const slides = useMemo(() => {
+    const filtered =
+      viewMode === 'showtime'
+        ? allSlides.filter(slide => slide.mediaType === 'video')
+        : allSlides.filter(slide => slide.mediaType === 'image');
+
+    return filtered.length ? filtered : allSlides;
+  }, [allSlides, viewMode]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
@@ -186,12 +194,19 @@ export default function Carousel({ lesson, viewMode, comfort, onRetryMedia }: Ca
           playsInline
         />
       ) : (
-        <img
-          src={slide.mediaUrl}
-          alt={slide.text}
-          className="h-full w-full bg-white object-contain"
-          referrerPolicy="no-referrer"
-        />
+        <div className="relative h-full w-full bg-white">
+          <img
+            src={slide.mediaUrl}
+            alt=""
+            className="h-full w-full object-contain"
+            referrerPolicy="no-referrer"
+          />
+          <div className="absolute inset-x-0 bottom-0 border-t border-brand-primary/10 bg-white/95 px-4 py-3 text-center shadow-[0_-8px_24px_rgba(25,56,69,0.08)] backdrop-blur-sm sm:px-6">
+            <p className="mx-auto max-w-3xl break-words text-sm font-extrabold leading-snug text-brand-dark sm:text-base">
+              {slide.text}
+            </p>
+          </div>
+        </div>
       );
     }
 

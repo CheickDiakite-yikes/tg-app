@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
 import { GoogleGenAI, GenerateVideosOperation } from "@google/genai";
 import "dotenv/config";
 
@@ -235,6 +237,84 @@ function ensureGeminiKey(res: express.Response) {
   return false;
 }
 
+function collectErrorText(error: any): string {
+  const parts: string[] = [];
+  let current = error;
+
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current?.message === "string") parts.push(current.message);
+    if (typeof current?.body === "string") parts.push(current.body);
+    current = current?.cause;
+  }
+
+  return parts.join(" ");
+}
+
+function extractGeminiErrorMessage(text: string): string | undefined {
+  const jsonStart = text.indexOf("{");
+  if (jsonStart < 0) return undefined;
+
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart));
+    return parsed?.error?.message || parsed?.message;
+  } catch {
+    return undefined;
+  }
+}
+
+function sendAiError(res: express.Response, label: string, error: any) {
+  console.error(label, error);
+
+  const rawText = collectErrorText(error);
+  const lower = rawText.toLowerCase();
+  const parsedMessage = extractGeminiErrorMessage(rawText);
+
+  if (
+    lower.includes("resource_exhausted") ||
+    lower.includes("quota") ||
+    lower.includes("rate limit") ||
+    lower.includes("429")
+  ) {
+    return res.status(429).json({
+      code: "GEMINI_QUOTA_EXHAUSTED",
+      error:
+        parsedMessage ||
+        "Gemini quota is exhausted for this key or model. Check Google AI Studio billing and rate limits, then retry.",
+    });
+  }
+
+  if (
+    lower.includes("api key not valid") ||
+    lower.includes("permission_denied") ||
+    lower.includes("unauthenticated") ||
+    lower.includes("401") ||
+    lower.includes("403")
+  ) {
+    return res.status(401).json({
+      code: "GEMINI_AUTH_ERROR",
+      error: parsedMessage || "Gemini rejected the configured API key or model permissions.",
+    });
+  }
+
+  if (
+    lower.includes("fetch failed") ||
+    lower.includes("eacces") ||
+    lower.includes("network") ||
+    lower.includes("connection")
+  ) {
+    return res.status(502).json({
+      code: "GEMINI_NETWORK_ERROR",
+      error:
+        "StoryBridge could not reach Gemini from the server. Check the server network, firewall, proxy, or VPN settings.",
+    });
+  }
+
+  return res.status(500).json({
+    code: "GEMINI_REQUEST_FAILED",
+    error: parsedMessage || error?.message || "Gemini request failed.",
+  });
+}
+
 app.get("/api/ai-status", (_req, res) => {
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
 
@@ -405,6 +485,8 @@ app.post("/api/chat", async (req, res) => {
     if (!sessionId || !message) {
       return res.status(400).json({ error: "sessionId and message required" });
     }
+    const sourceLesson = context?.sourceLesson;
+    const promptContext = sourceLesson ? { ...context, sourceLesson: "Provided below." } : context;
 
     const session = getSession(sessionId);
     const interaction = await ai.interactions.create({
@@ -414,7 +496,10 @@ Teacher message:
 ${message}
 
 Current creation settings:
-${JSON.stringify(context || {}, null, 2)}
+${JSON.stringify(promptContext || {}, null, 2)}
+
+${sourceLesson ? `Source lesson being edited or converted:
+${JSON.stringify(sourceLesson, null, 2)}` : ""}
 
 Agent behavior:
 - If the teacher gives a usable request, become readyToGenerate and draft the lesson without asking for settings or another question.
@@ -422,6 +507,11 @@ Agent behavior:
 - If the teacher writes "create", "make", or "generate", treat that as intent to build a draft.
 - If the teacher asks for video, animation, or Show Time, recommend showtime and make the suggested slides motion-aware.
 - If the teacher asks for both images and videos, recommend mixed and keep each moment visually simple.
+- If a source lesson is provided, treat the teacher message as edits or conversion instructions for that lesson. Preserve the strongest useful structure and do not switch to an unrelated topic.
+- If a source lesson is provided and mediaMode is "video", convert the source lesson into motion-friendly Show Time scenes.
+- If a source lesson is provided and mediaMode is "mixed", revise the slideshow plan and add new video moments that match the revised lesson.
+- For hygiene or self-care routines, suggest specific repeatable motor steps rather than broad summaries. For tooth brushing, include precise areas of the mouth when appropriate.
+- If the teacher requests a familiar or character-like guide, keep the visual description consistent across every suggested slide or scene.
 - If readyToGenerate is true, the reply should be declarative and should not contain a question mark.
 - If readyToGenerate is true, invite the teacher to keep chatting naturally: they can say "create it" or describe a change.
 - Put optional refinements in quickReplies instead of making the teacher answer before creating.
@@ -451,8 +541,7 @@ Return only the JSON object requested by the response schema. Keep the reply und
 
     res.json({ ...normalized, interactionId: interaction.id });
   } catch (error: any) {
-    console.error("Chat error:", error);
-    res.status(500).json({ error: error.message });
+    sendAiError(res, "Chat error:", error);
   }
 });
 
@@ -469,6 +558,8 @@ app.post("/api/generate-lesson", async (req, res) => {
     const session = sessionId ? getSession(sessionId) : undefined;
     const preferredMedia = preferences?.mediaMode || "image";
     const slideCount = Math.max(3, Math.min(Number(preferences?.lessonLength) || 5, 7));
+    const sourceLesson = preferences?.sourceLesson;
+    const promptPreferences = sourceLesson ? { ...preferences, sourceLesson: "Provided above." } : preferences;
 
     const interaction = await ai.interactions.create({
       model: GEMINI_TEXT_MODEL,
@@ -478,27 +569,37 @@ Create a complete StoryBridge lesson draft.
 Teacher topic or request:
 ${topic || "Use the conversation so far."}
 
+${sourceLesson ? `Source lesson to revise or convert:
+${JSON.stringify(sourceLesson, null, 2)}` : ""}
+
 Last agent draft state:
 ${JSON.stringify(session?.lastAgentState || {}, null, 2)}
 
 Teacher preferences:
-${JSON.stringify(preferences || {}, null, 2)}
+${JSON.stringify(promptPreferences || {}, null, 2)}
 
 Required lesson rules:
+- If a source lesson is provided, this is an edit or conversion of that lesson. Keep the same core student need unless the teacher explicitly changes it.
+- If a source lesson is provided, preserve the clearest useful steps, vocabulary, and safety framing while applying the teacher's requested edits.
+- If a source lesson is provided and preferences.mediaMode is "video", create a Show Time version using brand-new video prompts based on the source lesson plus edits.
+- If a source lesson is provided and preferences.mediaMode is "mixed", create a revised slideshow plan and choose new video moments where motion improves comprehension.
 - Create exactly ${slideCount} slides unless the topic needs fewer for clarity.
 - Learner-facing slide text should usually be 4 to 12 words.
 - Each slide must carry one concrete idea only.
 - Apply age-band appropriateness from the system guidance. If gradeBand is "Auto", infer the grade band from the teacher request and last agent draft.
-- If preferences.mediaMode is "video", every slide should be planned as a complete short animated moment with gentle motion, not a still image description.
-- If preferences.mediaMode is "mixed", choose video only when movement improves comprehension, otherwise use images.
+- If preferences.mediaMode is "video", plan the lesson as a sequence of scenes that will become one continuous Show Time video, not separate clips.
+- If preferences.mediaMode is "mixed", plan clear slideshow pages plus one continuous Show Time video scene sequence based on the same revised lesson.
+- For hygiene and self-care tasks, break the physical routine into specific repeatable motor actions the student can imitate. For tooth brushing, include precise areas such as upper front teeth, upper outside, upper inside, lower front teeth, lower outside, lower inside, chewing surfaces, tongue, spit, and rinse when age-appropriate.
+- For shower, hair, deodorant, toileting-adjacent, or privacy-sensitive routines, keep visuals school-safe and use clothed/non-private framing, close-ups of hands/tools/water controls, and clear safety actions.
 - Include narration for text-to-speech.
 - Include a teacher note and one interaction cue that accepts multiple communication modes.
-- Image prompts must describe a complete finished slide image, not a background. The generated image itself must include the exact learner-facing slide text, spelled correctly, as large hand-lettered dark navy text integrated into the composition.
-- Image prompts must specify: warm watercolor children's book illustration, calm classroom or everyday setting, inclusive characters, soft daylight, uncluttered scene, no logos, no extra labels or readable words on props/signs/cards, no crowded room, clear safe text area inside the image.
-- Video prompts must describe a complete generated clip or animated slide, not a background for app overlay. Include the exact slide text as a stable opening card, classroom poster, or illustrated title area inside the video when text rendering is supported.
-- Video prompts must specify: 4 to 6 seconds, gentle predictable motion, no fast cuts, no flashing lights, no sudden camera moves, no crowded scenes, no audio requirement.
+- If the teacher asks for a familiar or character-like guide, translate that into a consistent original character description and repeat the same visible traits in every imagePrompt and videoPrompt: face shape, hair/color, outfit, accessory, approximate age, palette, and body proportions. Do not let the character's outfit, hair, accessory, or proportions drift between slides.
+- Image prompts must describe a complete finished slide image, not a background. The app will render exact text separately, so image prompts must explicitly request no text, no letters, no labels, no captions, and no readable words inside the generated image.
+- Image prompts must specify: warm watercolor children's book illustration, calm classroom or everyday setting, inclusive characters, soft daylight, uncluttered scene, no logos, same character design across all slides, one clear action, safe environment, and a clean lower caption-safe area with simple background.
+- Video prompts must describe one complete multi-scene generated clip when the output is Show Time. Use scene changes or camera-angle changes inside the same video to show the lesson concepts.
+- Video prompts must specify: 8 seconds when possible, gentle predictable motion, no fast cuts, no flashing lights, no sudden camera moves, no crowded scenes, no audio requirement, no readable text, no captions, no labels, same character design across every scene.
 - If the teacher asks for social skills, frame it as choice, communication, and self-advocacy.
-- Hygiene visuals must stay school-safe: hands/sink/soap/towels are fine; no bathing, toileting details, nudity, private body areas, injuries, or medical procedure imagery.
+- Hygiene visuals must stay school-safe: hands/sink/soap/towels/water controls/deodorant/hair tools are fine; shower or hair-washing lessons should use clothed, non-private framing or close-ups of tools, hands, water, and hair only; no nudity, private body areas, toileting details, injuries, or medical procedure imagery.
 - Do not include punishment, shame, forced eye contact, restraint, medical claims, or promises of behavior change.
 
 Return only the JSON object requested by the response schema.
@@ -524,8 +625,7 @@ Return only the JSON object requested by the response schema.
 
     res.json({ ...lesson, interactionId: interaction.id });
   } catch (error: any) {
-    console.error("Lesson gen error:", error);
-    res.status(500).json({ error: error.message });
+    sendAiError(res, "Lesson gen error:", error);
   }
 });
 
@@ -542,12 +642,12 @@ app.post("/api/generate-image", async (req, res) => {
       input: `
 Create one complete StoryBridge slideshow image. This must be a finished slide frame, not a background for app text.
 
-${slideText ? `Render this exact learner-facing sentence inside the image, spelled correctly and prominently: "${slideText}"` : ""}
+${slideText ? `The app will render this exact learner-facing sentence below the image: "${slideText}". Do not draw or render this sentence inside the image.` : ""}
 
 ${prompt}
 
 StoryBridge image constraints:
-warm watercolor storybook illustration, calm low-arousal palette, soft daylight, friendly inclusive characters, dark navy hand-lettered slide text, clear readable text area integrated into the artwork, no readable words except the exact slide sentence, no text on props/signs/cards/posters, no logos, no clutter, one clear action, safe classroom or everyday environment, complete full-bleed slide composition.
+warm watercolor storybook illustration, calm low-arousal palette, soft daylight, friendly inclusive characters, same character design and outfit across the lesson, no readable text, no letters, no captions, no labels, no text on props/signs/cards/posters, no logos, no clutter, one clear repeatable action, safe classroom or everyday environment, clean lower caption-safe area with simple background, complete full-bleed slide composition. If a character guide is described, keep hair, face, outfit, accessories, colors, and proportions consistent.
       `.trim(),
       response_modalities: ["image"],
       response_format: {
@@ -565,8 +665,7 @@ warm watercolor storybook illustration, calm low-arousal palette, soft daylight,
     const imageUrl = image.uri || `data:${image.mimeType};base64,${image.data}`;
     res.json({ imageUrl, interactionId: interaction.id });
   } catch (error: any) {
-    console.error("Image gen error:", error);
-    res.status(500).json({ error: error.message });
+    sendAiError(res, "Image gen error:", error);
   }
 });
 
@@ -584,23 +683,26 @@ app.post("/api/generate-video", async (req, res) => {
       prompt: `
 Create one complete StoryBridge animated slide or short lesson clip. Do not rely on app overlay text.
 
-${slideText ? `Include this exact learner-facing sentence as a stable generated title card or poster inside the video when supported: "${slideText}"` : ""}
+${slideText ? `The app will display this learner-facing caption separately: "${slideText}". Do not render captions, subtitles, labels, or readable text inside the video.` : ""}
 
 ${prompt}
 
-StoryBridge video constraints: 4 to 6 seconds, gentle predictable motion, no fast cuts, no flashing, no sudden camera moves, no crowded scenes, no distress, no readable words except the exact slide sentence, no text on props/signs/cards/posters, no logos, calm inclusive storybook style.
+StoryBridge video constraints: one continuous multi-scene video, about 8 seconds when possible, gentle predictable motion, clear repeatable actions, no fast cuts, no flashing, no sudden camera moves, no crowded scenes, no distress, no readable text, no captions, no subtitles, no text on props/signs/cards/posters, no logos, calm inclusive storybook style, same character design and outfit across every scene.
       `.trim(),
       config: {
         numberOfVideos: 1,
         resolution: "720p",
+        durationSeconds: 8,
         aspectRatio: videoAspectRatio,
+        generateAudio: false,
+        negativePrompt:
+          "misspelled text, garbled letters, captions, subtitles, logos, inconsistent character, changing outfit, changing hair, changing accessories, extra fingers, distorted hands, flashing lights, sudden cuts, crowded scenes",
       },
     });
 
     res.json({ operationName: operation.name, aspectRatio: videoAspectRatio });
   } catch (error: any) {
-    console.error("Video gen start error:", error);
-    res.status(500).json({ error: error.message });
+    sendAiError(res, "Video gen start error:", error);
   }
 });
 
@@ -623,8 +725,7 @@ app.post("/api/video-status", async (req, res) => {
       error: (updated as any).error?.message,
     });
   } catch (error: any) {
-    console.error("Video poll error:", error);
-    res.status(500).json({ error: error.message });
+    sendAiError(res, "Video poll error:", error);
   }
 });
 
@@ -665,14 +766,28 @@ app.get("/api/video-download", async (req, res) => {
       }),
     );
   } catch (error: any) {
-    console.error("Video download error:", error);
-    if (!res.headersSent) res.status(500).json({ error: error.message });
+    if (!res.headersSent) sendAiError(res, "Video download error:", error);
   }
 });
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
+      configFile: false,
+      plugins: [react(), tailwindcss()],
+      build: {
+        target: "es2019",
+        cssTarget: "safari13",
+      },
+      esbuild: {
+        target: "es2019",
+      },
+      resolve: {
+        preserveSymlinks: true,
+        alias: {
+          "@": process.cwd(),
+        },
+      },
       server: { middlewareMode: true },
       appType: "spa",
     });

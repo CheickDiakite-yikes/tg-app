@@ -4,12 +4,24 @@ StoryBridge is a web app for K-12 teachers who support autistic learners. It hel
 
 The product goal is simple: a teacher should be able to say something like "make a lesson about washing hands for first grade" or "create a teen-friendly lesson about asking for a break during group work" and receive an age-appropriate, sensory-friendly visual lesson without becoming a prompt engineer.
 
+## Current Branch Summary
+
+This branch focuses on simplifying the teacher flow and improving generated output quality:
+
+- Create now starts with an explicit choice: Slide Show, Show Time Video, or Both.
+- Edit and conversion flows use the current lesson as hidden context instead of pasting generated prompt text into the chat box.
+- Show Time output is moving toward one continuous multi-scene video instead of one video per slideshow page.
+- Slide text is rendered by the app in a consistent bottom caption bar, not by the image model, to avoid misspellings and formatting drift.
+- Prompting has been tightened for specific hygiene actions, character consistency, school-safe visuals, and cleaner video scene structure.
+
+Current work: verify the latest prompt and one-video behavior live after restarting the local dev server, then continue tuning image/video quality from teacher feedback.
+
 ## What It Does Today
 
 - Natural lesson creation chat with a StoryBridge agent.
 - Structured lesson planning for titles, objectives, slides, narration, teacher notes, interaction cues, and sensory goals.
-- AI image generation for full-slide images where the slide text is generated inside the artwork.
-- AI video generation for Show Time clips using Veo long-running operations.
+- AI image generation for full-slide visuals with exact learner-facing text rendered by the app.
+- AI video generation for Show Time using Veo long-running operations, optimized toward one multi-scene video output.
 - Swipe-friendly slide viewing on desktop, iPad, and iPhone-sized screens.
 - Saved Teacher Library with search and filters for slide lessons and Show Time lessons.
 - Teacher profile/library entry from the top-right avatar.
@@ -26,7 +38,7 @@ StoryBridge is built for teachers working with autistic children, so the design 
 - Avoid shame, punishment, forced eye contact, compliance framing, and medical claims.
 - Keep slide language short, literal, and age-appropriate.
 - Keep visuals uncluttered, predictable, and low-arousal.
-- Do not overlay app text on top of generated slide images. The model should render the learner-facing text as part of the generated image or video whenever supported.
+- Keep learner-facing text consistent and exact. The app renders slide text in a controlled caption area; image and video prompts should avoid generated readable text.
 
 ## Tech Stack
 
@@ -114,7 +126,7 @@ Teacher prompt
   -> React shows agent reply and inferred draft
   -> /api/generate-lesson creates structured lesson JSON
   -> /api/generate-image creates full-slide images through Interactions
-  -> /api/generate-video starts Veo operation when Show Time video is needed
+  -> /api/generate-video starts one multi-scene Veo operation when Show Time video is needed
   -> /api/video-status polls until done
   -> /api/video-download streams the MP4
   -> Carousel plays Slide Show or Show Time
@@ -129,7 +141,7 @@ Teacher prompt
 | `POST /api/chat` | Agentic teacher conversation with session memory. | `ai.interactions.create` |
 | `POST /api/generate-lesson` | Creates structured lesson JSON. | `ai.interactions.create` |
 | `POST /api/generate-image` | Creates a complete slide image. | `ai.interactions.create` with `response_modalities: ["image"]` |
-| `POST /api/generate-video` | Starts a Veo video job. | `ai.models.generateVideos` |
+| `POST /api/generate-video` | Starts a Veo video job for Show Time output. | `ai.models.generateVideos` |
 | `POST /api/video-status` | Polls a Veo operation. | `ai.operations.getVideosOperation` |
 | `GET /api/video-download?op=...` | Streams the completed MP4 to the app. | Fetches the generated video URI with server API key |
 
@@ -383,9 +395,12 @@ Generation prompts should enforce:
 - Age-appropriate tone and visuals.
 - Inclusive characters and school-safe settings.
 - No clutter, fast cuts, flashing lights, or sudden camera moves.
+- Consistent character design, outfit, hair, accessories, proportions, and setting across related visuals.
+- Exact learner-facing text rendered by the app, not generated as image/video text.
+- Specific repeatable motor actions for hygiene and self-care routines.
 - No shame, punishment, restraint, forced eye contact, or compliance framing.
 - No stereotypes about autistic learners.
-- Hygiene visuals limited to school-safe items like hands, sinks, soap, towels, and toothbrushes.
+- Hygiene visuals limited to school-safe framing such as hands, sinks, soap, towels, toothbrushes, water controls, hair tools, and clothed/non-private views.
 - Sensitive topics such as body safety, bullying, self-injury, medical issues, aggression, or elopement should stay calm, non-graphic, and trusted-adult oriented.
 
 Age guidance:
@@ -402,7 +417,7 @@ Age guidance:
 - Do not use legacy `generateContent` for chat, lesson JSON, or images.
 - Use Interactions API for text, structured output, stateful chat, and images.
 - Keep Veo video generation on the long-running operation path until the provider supports equivalent Interactions behavior.
-- Do not overlay slide text in the app over AI images. The generated media should contain the text.
+- Do not ask image or video models to render readable lesson text. Use app-rendered captions for exact spelling and consistent formatting.
 - Use the CSS variables in `src/index.css` instead of adding unrelated color systems.
 - Keep generated media, secrets, and local test artifacts out of git.
 
@@ -553,7 +568,7 @@ Poll `/api/video-status` until `done` and `hasVideo` are true. If the operation 
 
 ### Images or videos have bad text
 
-Model-rendered text can be imperfect. Keep slide text short, literal, and high contrast. The prompt should say the exact text must be rendered inside the generated media and that no other readable text should appear.
+Model-rendered text can be imperfect. Current prompts should avoid readable text inside generated media. The app renders the exact slide text in a caption area, so check the prompt if generated images or videos contain labels, captions, or garbled letters.
 
 ### Saved lessons disappear
 
@@ -565,12 +580,13 @@ Stop the other process or update `PORT` in `server.ts` before running the dev se
 
 ## Current Verification Snapshot
 
-As of June 28, 2026:
+As of July 1, 2026:
 
 - `npm run lint` passes.
 - `npm run build` passes.
 - Real Gemini image generation has been exercised through `/api/generate-image`.
 - Real Veo generation has produced a playable MP4 through `/api/generate-video`, `/api/video-status`, and `/api/video-download`.
 - The generated video plays in the Show Time tab.
+- Latest output-quality changes still need a live generation pass after restarting the local dev server.
 
 Re-run the validation commands after changes that touch `server.ts`, `src/App.tsx`, `src/components/Carousel.tsx`, or `src/components/CreateModal.tsx`.

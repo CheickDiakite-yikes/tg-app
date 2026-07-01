@@ -19,8 +19,8 @@ interface CreateModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLessonCreated: (lesson: Lesson, size: string, ratio: string) => void;
-  initialPrompt?: string;
-  onInitialPromptConsumed?: () => void;
+  mode?: 'new' | 'edit';
+  sourceLesson?: Lesson | null;
 }
 
 interface Message {
@@ -46,8 +46,66 @@ interface AgentState {
 type MediaMode = 'image' | 'mixed' | 'video';
 type RetryAction = { type: 'chat'; text: string } | { type: 'lesson' };
 
-const starterMessage =
-  'What should we make for your students today? You can say it naturally, like "washing hands before snack for kindergarten" or "make a short video about asking for a break."';
+const modeOptions: Array<{
+  mode: MediaMode;
+  title: string;
+  detail: string;
+  Icon: typeof Images;
+}> = [
+  {
+    mode: 'image',
+    title: 'Slide Show',
+    detail: 'Still visual pages with narration and teacher notes.',
+    Icon: Images,
+  },
+  {
+    mode: 'video',
+    title: 'Show Time Video',
+    detail: 'Short animated scenes for guided viewing.',
+    Icon: Clapperboard,
+  },
+  {
+    mode: 'mixed',
+    title: 'Both',
+    detail: 'A slide deck with selected video moments.',
+    Icon: Sparkles,
+  },
+];
+
+const editModeOptions: Array<{
+  mode: MediaMode;
+  title: string;
+  detail: string;
+  Icon: typeof Images;
+}> = [
+  {
+    mode: 'image',
+    title: 'Edit slideshow',
+    detail: 'Revise the current lesson as a slide deck.',
+    Icon: Images,
+  },
+  {
+    mode: 'video',
+    title: 'Make Show Time video',
+    detail: 'Create brand-new video scenes from this lesson and your edits.',
+    Icon: Clapperboard,
+  },
+  {
+    mode: 'mixed',
+    title: 'Make both',
+    detail: 'Revise the slideshow and add new video moments from that revised version.',
+    Icon: Sparkles,
+  },
+];
+
+const starterMessageByMode: Record<MediaMode, string> = {
+  image:
+    'Slide Show selected. What should we make for your students today? You can say it naturally, like "washing hands before snack for kindergarten."',
+  video:
+    'Show Time Video selected. What should we make for your students today? You can say it naturally, like "asking for a break after loud work."',
+  mixed:
+    'Both selected. What should we make for your students today? StoryBridge will combine calm slides with video moments where motion helps.',
+};
 
 const gradeBandOptions = ['Auto', 'K-2', '3-5', '6-8', '9-12'];
 
@@ -112,16 +170,25 @@ const friendlyAiError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || '');
   const lower = message.toLowerCase();
 
-  if (lower.includes('failed to fetch') || lower.includes('network')) {
-    return "StoryBridge could not reach the lesson studio. Your idea is still here, and you can retry in a moment.";
+  if (lower.includes('quota') || lower.includes('resource_exhausted') || lower.includes('429')) {
+    return 'Gemini quota is exhausted for this key or model. Check Google AI Studio billing and rate limits, then retry.';
   }
 
   if (lower.includes('gemini_api_key') || lower.includes('api key')) {
     return 'StoryBridge needs the Gemini key before it can generate new lessons.';
   }
 
-  if (lower.includes('quota') || lower.includes('rate')) {
-    return 'The AI studio is busy right now. Retry soon, or simplify the request for a faster first draft.';
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('fetch failed') ||
+    lower.includes('network') ||
+    lower.includes('gemini_network_error')
+  ) {
+    return 'StoryBridge could not reach Gemini from the server. Check the server network, firewall, proxy, or VPN settings.';
+  }
+
+  if (lower.includes('rate')) {
+    return 'Gemini is rate limiting this request. Wait a moment, then retry a smaller first draft.';
   }
 
   if (lower.includes('invalid lesson structure')) {
@@ -131,59 +198,163 @@ const friendlyAiError = (error: unknown) => {
   return message || "I couldn't finish that request. Please retry or describe a small change.";
 };
 
-const formatLabel = (format?: AgentState['recommendedFormat']) => {
-  if (format === 'showtime') return 'Show Time video';
+const compactLessonContext = (lesson?: Lesson | null) => {
+  if (!lesson) return undefined;
+
+  return {
+    id: lesson.id,
+    title: lesson.title,
+    objective: lesson.objective,
+    audience: lesson.audience,
+    sensoryNotes: lesson.sensoryNotes,
+    estimatedDuration: lesson.estimatedDuration,
+    agentSummary: lesson.agentSummary,
+    slides: lesson.slides.map(slide => ({
+      text: slide.text,
+      narration: slide.narration,
+      imagePrompt: slide.imagePrompt,
+      videoPrompt: slide.videoPrompt,
+      mediaType: slide.mediaType,
+      teacherNote: slide.teacherNote,
+      interactionCue: slide.interactionCue,
+      sensoryGoal: slide.sensoryGoal,
+      safetyNotes: slide.safetyNotes,
+    })),
+  };
+};
+
+const formatLabel = (format?: AgentState['recommendedFormat'] | MediaMode) => {
+  if (format === 'showtime' || format === 'video') return 'Show Time video';
   if (format === 'mixed') return 'Images + video';
   return 'Slide Show';
+};
+
+const recommendedFormatForMediaMode = (mode: MediaMode): AgentState['recommendedFormat'] =>
+  mode === 'video' ? 'showtime' : mode === 'mixed' ? 'mixed' : 'slideshow';
+
+const editGreetingForMode = (lessonTitle: string, mode: MediaMode) => {
+  if (mode === 'video') {
+    return `You are making a Show Time video version of "${lessonTitle}". Tell me any changes, or create the video draft when it looks right.`;
+  }
+
+  if (mode === 'mixed') {
+    return `You are making both from "${lessonTitle}". StoryBridge will revise the slideshow plan and create brand-new video moments from that revised version.`;
+  }
+
+  return `You are editing "${lessonTitle}". Tell me what to change, or create a revised slideshow when it looks right.`;
+};
+
+const stepText = (value?: string) => (value || '').replace(/\s+/g, ' ').trim();
+
+const buildSlide = (slide: any, mediaType: Slide['mediaType']): Slide => ({
+  id: makeId(),
+  text: stepText(slide.text) || 'Watch this step.',
+  narration: stepText(slide.narration) || stepText(slide.text) || 'Watch this step.',
+  imagePrompt: stepText(slide.imagePrompt) || 'A calm watercolor classroom routine scene with one clear action.',
+  videoPrompt: stepText(slide.videoPrompt) || stepText(slide.imagePrompt),
+  mediaType,
+  teacherNote: slide.teacherNote,
+  interactionCue: slide.interactionCue,
+  sensoryGoal: slide.sensoryGoal,
+  safetyNotes: slide.safetyNotes,
+  isLoading: true,
+  mediaStatus: 'queued',
+  mediaProgress: mediaType === 'video' ? 'Queued for video rendering.' : 'Queued for image generation.',
+});
+
+const buildSingleShowtimeSlide = (lessonTitle: string, draftSlides: any[]): Slide => {
+  const cleanedSlides = draftSlides.length ? draftSlides : [{ text: lessonTitle }];
+  const sceneLines = cleanedSlides
+    .map((slide, index) => {
+      const action = stepText(slide.narration) || stepText(slide.text) || `Step ${index + 1}`;
+      const visual = stepText(slide.videoPrompt) || stepText(slide.imagePrompt) || action;
+      return `Scene ${index + 1}: ${action}. Visual direction: ${visual}`;
+    })
+    .join('\n');
+  const narration = cleanedSlides
+    .map(slide => stepText(slide.narration) || stepText(slide.text))
+    .filter(Boolean)
+    .join(' ');
+
+  return {
+    id: makeId(),
+    text: cleanedSlides.length > 1 ? `Watch the ${cleanedSlides.length} steps.` : stepText(cleanedSlides[0]?.text) || 'Watch the routine.',
+    narration: narration || lessonTitle,
+    imagePrompt: stepText(cleanedSlides[0]?.imagePrompt) || 'A calm watercolor classroom routine scene with one clear action.',
+    videoPrompt: `
+Create one single continuous Show Time video for "${lessonTitle}".
+Use one consistent character design, outfit, proportions, colors, hairstyle, accessories, and environment across the entire clip.
+Show the concepts as clear scene changes or camera-angle changes inside the same video, not separate videos.
+Each scene must show a specific, repeatable action a student can imitate.
+Keep motion slow, predictable, and low-arousal.
+Do not render captions, subtitles, logos, labels, or any readable text inside the video.
+
+Scene plan:
+${sceneLines}
+    `.trim(),
+    mediaType: 'video',
+    teacherNote: 'Use the video as one complete model, pausing afterward to practice each step.',
+    interactionCue: 'Invite the student to point to, say, gesture, or imitate one step at a time.',
+    sensoryGoal: 'Keep the pace steady and the character visually consistent across every scene.',
+    safetyNotes: cleanedSlides.flatMap(slide => (Array.isArray(slide.safetyNotes) ? slide.safetyNotes : [])).slice(0, 4),
+    isLoading: true,
+    mediaStatus: 'queued',
+    mediaProgress: 'Queued for one multi-scene video render.',
+  };
 };
 
 export default function CreateModal({
   isOpen,
   onClose,
   onLessonCreated,
-  initialPrompt,
-  onInitialPromptConsumed,
+  mode = 'new',
+  sourceLesson,
 }: CreateModalProps) {
-  const [sessionId] = useState(() => makeId());
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      text: starterMessage,
-    },
-  ]);
+  const [sessionId, setSessionId] = useState(() => makeId());
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [imageSize, setImageSize] = useState('1K');
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [gradeBand, setGradeBand] = useState('Auto');
   const [lessonLength, setLessonLength] = useState(4);
   const [mediaMode, setMediaMode] = useState<MediaMode>('image');
+  const [hasChosenMode, setHasChosenMode] = useState(false);
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const lastInitialPromptRef = useRef<string | undefined>(undefined);
+  const didResetOnOpenRef = useRef(false);
+  const isEditMode = mode === 'edit' && Boolean(sourceLesson);
+  const sourceLessonTitle = sourceLesson?.title || 'this lesson';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, agentState]);
 
   useEffect(() => {
-    if (!isOpen || !initialPrompt || initialPrompt === lastInitialPromptRef.current) return;
-    lastInitialPromptRef.current = initialPrompt;
-    setInput(initialPrompt);
-    setMessages(prev => [
-      ...prev,
-      {
-        id: makeId(),
-        role: 'assistant',
-        text: 'I can revise the open lesson from here. Adjust the note or send it as written.',
-      },
-    ]);
-    onInitialPromptConsumed?.();
-  }, [initialPrompt, isOpen, onInitialPromptConsumed]);
+    if (!isOpen) {
+      didResetOnOpenRef.current = false;
+      return;
+    }
+    if (didResetOnOpenRef.current) return;
+
+    didResetOnOpenRef.current = true;
+    setSessionId(makeId());
+    setMessages([]);
+    setInput('');
+    setImageSize('1K');
+    setAspectRatio('16:9');
+    setGradeBand(sourceLesson?.audience?.match(/K-2|3-5|6-8|9-12/)?.[0] || 'Auto');
+    setLessonLength(sourceLesson?.slides.length || 4);
+    setMediaMode('image');
+    setHasChosenMode(false);
+    setAgentState(null);
+    setIsTyping(false);
+    setIsGeneratingLesson(false);
+    setRetryAction(null);
+  }, [isOpen, mode, sourceLesson?.id, sourceLesson?.slides.length, sourceLesson?.audience]);
 
   const getCreationContext = (overrides: Partial<{
     gradeBand: string;
@@ -198,20 +369,62 @@ export default function CreateModal({
     imageSize: overrides.imageSize ?? imageSize,
     aspectRatio: overrides.aspectRatio ?? aspectRatio,
     audience: 'K-12 teachers supporting autistic learners',
+    workflowMode: isEditMode ? 'edit' : 'new',
+    sourceLesson: isEditMode ? compactLessonContext(sourceLesson) : undefined,
   });
 
   const isBusy = isTyping || isGeneratingLesson;
+
+  const chooseMediaMode = (nextMode: MediaMode) => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    setMediaMode(nextMode);
+    setHasChosenMode(true);
+
+    if (isEditMode) {
+      const suggestedSlides = sourceLesson?.slides.map(slide => slide.text).slice(0, 5) || [];
+      setMessages([
+        {
+          id: makeId(),
+          role: 'assistant',
+          text: editGreetingForMode(sourceLessonTitle, nextMode),
+        },
+      ]);
+      setAgentState({
+        readyToGenerate: true,
+        draftTitle: sourceLessonTitle,
+        recommendedFormat: recommendedFormatForMediaMode(nextMode),
+        suggestedSlides,
+        safetyNotes: sourceLesson?.sensoryNotes,
+      });
+      return;
+    }
+
+    setMessages([
+      {
+        id: makeId(),
+        role: 'assistant',
+        text: starterMessageByMode[nextMode],
+      },
+    ]);
+  };
+
+  const defaultEditTopic = () => {
+    if (!isEditMode) return 'A calm classroom social story';
+    if (mediaMode === 'video') return `Create a Show Time video version of "${sourceLessonTitle}" using the source lesson and teacher edits.`;
+    if (mediaMode === 'mixed') return `Revise "${sourceLessonTitle}" as a slideshow and add new video moments based on the revised lesson.`;
+    return `Revise "${sourceLessonTitle}" as a calmer, age-appropriate slideshow.`;
+  };
 
   const lastLessonRequest = () =>
     [...messages]
       .reverse()
       .find(message => message.role === 'user' && !isCreateConfirmation(message.text))?.text ||
     agentState?.draftTitle ||
-    'A calm classroom social story';
+    defaultEditTopic();
 
   const sendMessage = async (messageText?: string) => {
     const text = (messageText ?? input).trim();
-    if (!text || isBusy) return;
+    if (!text || isBusy || !hasChosenMode) return;
 
     if (navigator.vibrate) navigator.vibrate(50);
 
@@ -225,7 +438,6 @@ export default function CreateModal({
     const inferred = inferSettingsFromText(text, { gradeBand, lessonLength, mediaMode });
     if (inferred.gradeBand !== gradeBand) setGradeBand(inferred.gradeBand);
     if (inferred.lessonLength !== lessonLength) setLessonLength(inferred.lessonLength);
-    if (inferred.mediaMode !== mediaMode) setMediaMode(inferred.mediaMode);
 
     const userMsg: Message = { id: makeId(), role: 'user', text };
     setMessages(prev => [...prev, userMsg]);
@@ -239,7 +451,7 @@ export default function CreateModal({
         body: JSON.stringify({
           sessionId,
           message: userMsg.text,
-          context: getCreationContext(inferred),
+          context: getCreationContext({ ...inferred, mediaMode }),
         }),
       });
       const data = await res.json();
@@ -273,6 +485,8 @@ export default function CreateModal({
   };
 
   const generateLesson = async () => {
+    if (!hasChosenMode) return;
+
     if (navigator.vibrate) navigator.vibrate(50);
 
     const lastUserMsg = lastLessonRequest();
@@ -296,30 +510,16 @@ export default function CreateModal({
       setRetryAction(null);
 
       const lessonId = makeId();
-      const initialSlides: Slide[] = structData.slides.map((slide: any) => {
-        const slideMediaType =
-          mediaMode === 'mixed' ? (slide.mediaType === 'video' ? 'video' : 'image') : mediaMode;
-
-        return {
-          id: makeId(),
-          text: slide.text,
-          narration: slide.narration,
-          imagePrompt: slide.imagePrompt,
-          videoPrompt: slide.videoPrompt,
-          mediaType: slideMediaType,
-          teacherNote: slide.teacherNote,
-          interactionCue: slide.interactionCue,
-          sensoryGoal: slide.sensoryGoal,
-          safetyNotes: slide.safetyNotes,
-          isLoading: true,
-          mediaStatus: 'queued',
-          mediaProgress: slideMediaType === 'video' ? 'Queued for video rendering.' : 'Queued for image generation.',
-        };
-      });
+      const draftSlides = structData.slides as any[];
+      const title = structData.title || agentState?.draftTitle || 'StoryBridge Lesson';
+      const imageSlides = draftSlides.map(slide => buildSlide(slide, 'image'));
+      const showtimeSlide = buildSingleShowtimeSlide(title, draftSlides);
+      const initialSlides: Slide[] =
+        mediaMode === 'video' ? [showtimeSlide] : mediaMode === 'mixed' ? [...imageSlides, showtimeSlide] : imageSlides;
 
       const newLesson: Lesson = {
         id: lessonId,
-        title: structData.title || agentState?.draftTitle || 'StoryBridge Lesson',
+        title,
         objective: structData.objective,
         audience: structData.audience,
         sensoryNotes: structData.sensoryNotes,
@@ -375,7 +575,11 @@ export default function CreateModal({
                   StoryBridge Agent
                 </p>
                 <p className="truncate text-xs font-semibold text-brand-text/55">
-                  Describe the need. The agent infers the lesson plan.
+                  {hasChosenMode
+                    ? `${formatLabel(mediaMode)} selected`
+                    : isEditMode
+                      ? 'Choose how to revise this lesson'
+                      : 'Choose the output first'}
                 </p>
               </div>
             </div>
@@ -388,8 +592,55 @@ export default function CreateModal({
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
-            {messages.map(message => (
+          {!hasChosenMode ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+              <div className="mx-auto flex max-w-2xl flex-col gap-4 py-2">
+                <div className="rounded-[1.6rem] border border-brand-primary/10 bg-white px-5 py-5 shadow-sm">
+                  <p className="text-lg font-extrabold text-brand-dark">What are we making?</p>
+                  <p className="mt-1 text-sm font-semibold leading-relaxed text-brand-text/60">
+                    {isEditMode
+                      ? `Choose what to do with "${sourceLessonTitle}".`
+                      : 'Pick the format first so StoryBridge knows exactly what to generate.'}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {(isEditMode ? editModeOptions : modeOptions).map(({ mode, title, detail, Icon }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => chooseMediaMode(mode)}
+                      className="group flex min-h-[158px] flex-col items-start justify-between rounded-[1.4rem] border border-brand-primary/10 bg-white px-4 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-primary/30 hover:shadow-md active:translate-y-0"
+                    >
+                      <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-light text-brand-primary transition-colors group-hover:bg-brand-primary group-hover:text-white">
+                        <Icon size={22} />
+                      </span>
+                      <span>
+                        <span className="block text-base font-extrabold text-brand-dark">{title}</span>
+                        <span className="mt-1 block text-sm font-semibold leading-snug text-brand-text/60">
+                          {detail}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                {isEditMode && (
+                  <div className="rounded-[1.4rem] bg-brand-light px-4 py-3 text-sm font-semibold leading-relaxed text-brand-text/70">
+                    You can describe changes after choosing an option. The current lesson stays hidden as context.
+                  </div>
+                )}
+
+                {input.trim() && (
+                  <div className="rounded-[1.4rem] bg-brand-light px-4 py-3 text-sm font-semibold leading-relaxed text-brand-text/70">
+                    Your revision note is ready. Choose a format, then send it.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+              {messages.map(message => (
               <div
                 key={message.id}
                 className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}
@@ -405,13 +656,13 @@ export default function CreateModal({
                   {message.text}
                 </div>
               </div>
-            ))}
+              ))}
 
-            {agentState?.readyToGenerate ? (
+              {agentState?.readyToGenerate ? (
               <div className="rounded-[1.6rem] border border-brand-primary/10 bg-white p-4 shadow-sm">
                 <div className="flex items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-light text-brand-primary">
-                    {agentState.recommendedFormat === 'showtime' ? <Clapperboard size={21} /> : <Images size={21} />}
+                    {mediaMode === 'video' ? <Clapperboard size={21} /> : mediaMode === 'mixed' ? <Sparkles size={21} /> : <Images size={21} />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -422,7 +673,7 @@ export default function CreateModal({
                         {agentState.learnerProfile?.gradeBand || gradeBand}
                       </span>
                       <span className="rounded-full bg-brand-light px-2.5 py-1 text-[11px] font-extrabold text-brand-dark">
-                        {formatLabel(agentState.recommendedFormat)}
+                        {formatLabel(mediaMode)}
                       </span>
                     </div>
 
@@ -451,7 +702,7 @@ export default function CreateModal({
                         className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-5 py-3 text-sm font-extrabold text-white shadow-md transition-transform active:scale-95 disabled:opacity-60"
                       >
                         {isGeneratingLesson ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-                        Create {agentState.recommendedFormat === 'showtime' ? 'Show Time' : 'slideshow'}
+                        Create {formatLabel(mediaMode)}
                       </button>
                       {agentState.quickReplies
                         ?.filter(reply => !isCreateConfirmation(reply) && !/\b(create|generate|make|slideshow now)\b/i.test(reply))
@@ -471,14 +722,14 @@ export default function CreateModal({
                   </div>
                 </div>
               </div>
-            ) : agentState ? (
+              ) : agentState ? (
               <div className="mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border border-brand-primary/10 bg-white/80 px-3 py-2 text-xs font-extrabold text-brand-text/70 shadow-sm">
                 <Wand2 size={14} className="text-brand-primary" />
                 <span>I can keep refining from here</span>
               </div>
-            ) : null}
+              ) : null}
 
-            {retryAction && !isBusy && (
+              {retryAction && !isBusy && (
               <div className="flex justify-start">
                 <div className="max-w-[86%] rounded-3xl rounded-tl-md border border-brand-primary/10 bg-white px-4 py-3 text-sm font-semibold text-brand-text shadow-sm sm:max-w-[78%]">
                   <div className="flex items-start gap-2">
@@ -497,9 +748,9 @@ export default function CreateModal({
                   </div>
                 </div>
               </div>
-            )}
+              )}
 
-            {isTyping && (
+              {isTyping && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-brand-primary/10 bg-white px-5 py-4 shadow-sm">
                   <div className="h-2 w-2 animate-bounce rounded-full bg-brand-primary/40" />
@@ -513,20 +764,22 @@ export default function CreateModal({
                   />
                 </div>
               </div>
-            )}
+              )}
 
-            {isGeneratingLesson && (
+              {isGeneratingLesson && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-3xl rounded-tl-md border border-brand-primary/10 bg-white px-4 py-3 text-sm font-semibold text-brand-text shadow-sm">
                   <Loader2 size={17} className="animate-spin text-brand-primary" />
                   Building your lesson now.
                 </div>
               </div>
-            )}
+              )}
 
-            <div ref={messagesEndRef} />
-          </div>
+              <div ref={messagesEndRef} />
+            </div>
+          )}
 
+          {hasChosenMode && (
           <div className="shrink-0 border-t border-brand-primary/10 bg-white p-3 sm:p-4">
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -553,6 +806,7 @@ export default function CreateModal({
               </div>
             </div>
           </div>
+          )}
         </motion.div>
       </div>
     </AnimatePresence>
